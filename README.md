@@ -194,11 +194,6 @@ parameter distributions as follows:
 a_hat = hbm.fit.stan_variable("a") # hbm.fit is a CmdStanMCMC object
 ```
 
-# Development
+## Tutorials
 
-## pre-commit, type checking, etc.
-
-* install `pre-commit` with `pip install pre-commit`.
-* install git hooks with `pre-commit install`
-* install `mypy`
-* skip checks with --no-verify flag
+In the folder `notebooks` there are a number of tutorials, demonstrating the features of HBOMS. *Currently there is only a single notebook about epidemic models.*
