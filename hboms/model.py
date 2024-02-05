@@ -535,6 +535,7 @@ def simulate_stan_model(
         show_progress=False,
         chains=1,
         iter_warmup=0,
+        adapt_engaged=False,
         iter_sampling=num_simulations,
         seed=seed,
     )
