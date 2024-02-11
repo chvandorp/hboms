@@ -1,7 +1,21 @@
 # Hierarchical Bayesian ODE Models using Stan
 
-Package to automatically generate Stan code for fitting hierarchical ODE models with Stan.
-The integration of the ODEs is distributed over multiple CPU cores using the `map_rect` function.
+Python package to automatically generate Stan code for fitting hierarchical ODE models with Stan.
+The integration of the ODEs is distributed over multiple CPU cores using Stan's `map_rect` function.
+
+The type of data HBOMS is tailored to is panels of timeseries from replicate experiments or observations
+where there is latent inter-unit variability in parameters. In the frequentist universe one would use
+a non-linear random effects (or mixed effects) model. Writing such models in Stan is not that difficult,
+but it is tedious and error prone, especially during model development and if one wants to test multiple 
+model variants and assumptions about the parameters. 
+HBOMS generates efficient, human readable, and correct Stan code from minimal user 
+input. As models are constructed in python, Stan code can be generated programmatically, 
+making it easier to compare a number of candicate models.
+HBOMS provides methods to fit the Stan models to data, and inspect the results, but the generated code can also
+and further developed independently from the HBOMS package.
+
+Similar or related packages are `brms`, `Monolix` and `Torsten`.
+
 
 ## Installation
 
@@ -196,4 +210,5 @@ a_hat = hbm.fit.stan_variable("a") # hbm.fit is a CmdStanMCMC object
 
 ## Tutorials
 
-In the folder `notebooks` there are a number of tutorials, demonstrating the features of HBOMS. *Currently there is only a single notebook about epidemic models.*
+In the folder `notebooks` there are a number of tutorials, demonstrating the features of HBOMS. 
+*Currently there are only two notebooks about epidemic models, and within-host infection data with censored observations. This collection will grow!*
