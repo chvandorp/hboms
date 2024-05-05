@@ -96,7 +96,7 @@ def gen_functions_block(
 
     rng_functions = [
         genfunctions.gen_rng_function(
-            dist, params, state, trans_state, rng_parnames=rng_parnames
+            dist, params, obs, state, trans_state, rng_parnames=rng_parnames
         )
         for dist, rng_parnames in zip(dists, rngs_parnames)
     ]
@@ -688,13 +688,18 @@ def gen_gq_block(
 
     statements: list[sl.Stmt] = []  # to be returned
 
+    # create list of correctly indexed observations (to be used on a unit-timepoint for-loop)
+    obs_vars = [sl.expandVar(ob.var, (R, maxN)) for ob in obs]
+    obs_vars_idx: list[sl.Expr] = [sl.MultiIndexOp(var, [r, n]) for var in obs_vars]
+
     # create list with correctly indexed parameters
     par_vars = [gencommon.expand_and_index_param(p, apply_idx=True) for p in params]
     # select parameters used by the loglik function
     ll_par_vars = [pv for pv, p in zip(par_vars, params) if p.name in loglik_parnames]
-    # select parameters used by the rng functions
+    # select parameters used by the rng functions, and also add potential observations used for sampling
     rngs_par_vars = [
-        [pv for pv, p in zip(par_vars, params) if p.name in rng_parnames]
+        [pv for pv, p in zip(par_vars, params) if p.name in rng_parnames] + \
+            [obv for obv, ob in zip(obs_vars_idx, obs) if ob.name in rng_parnames]
         for rng_parnames in rngs_parnames
     ]
     # select parameters used by ivp solver
@@ -750,9 +755,7 @@ def gen_gq_block(
     sumNrn = sl.Call("sum", [N.idx(sl.Range(None, r - sl.one()))]) + (n - sl.one())
     idx_decl = sl.DeclAssign(idx, sl.LiteralInt(odim) * sl.Par(sumNrn) + sl.one())
 
-    obs_vars = [sl.expandVar(ob.var, (R, maxN)) for ob in obs]
-    obs_vars_idx: list[sl.Expr] = [sl.MultiIndexOp(var, [r, n]) for var in obs_vars]
-
+    # the likelihood function requires observations (defined above), but also censoring info
     cc_vars = [
         sl.Var(sl.Array(sl.Int(), (R, maxN)), ob.cc_name) for ob in obs if ob.censored
     ]
@@ -822,25 +825,18 @@ def gen_stan_model(
 
     # FIXME: instead of deparsing and tokenizing, find variables in an expression directly
 
-    # TODO: there are distributions that use different parameters for RNG and loglik (e.g. multinomial)
-
     parnames = [p.name for p in params]
+    obsnames = [ob.name for ob in obs]
 
     dists_pars = [dist.params() for dist in dists]
-    dists_parnames = [
-        util.unique(
-            util.flatten(
-                [
-                    stanlexer.find_used_names(deparse.deparse_expr(par), parnames)
-                    for par in dist_pars
-                ]
-            )
-        )
-        for dist_pars in dists_pars
-    ]
+    dists_parnames = [gencommon.find_varnames(dist_pars, parnames) for dist_pars in dists_pars]
 
     # the loglik function takes parameters from all distributions
     loglik_parnames = util.unique(util.flatten(dists_parnames))
+    
+    # some RNGs require observations to sample: such as the multinomial_rng
+    rngs_pars = [dist.params(rng=True) for dist in dists]
+    rngs_parnames = [gencommon.find_varnames(rng_pars, parnames + obsnames) for rng_pars in rngs_pars]
 
     # find parameters required for initial state, odes, and transform
     init_parnames = stanlexer.find_used_names(deparse.deparse_stmt(init), parnames)
@@ -870,7 +866,7 @@ def gen_stan_model(
             init_parnames,
             odes_parnames,
             trans_parnames,
-            dists_parnames,
+            rngs_parnames,
             loglik_parnames,
         ),
         gen_data_block(params, obs, covs, options),
@@ -898,7 +894,7 @@ def gen_stan_model(
             obs,
             options,
             ivp_parnames,
-            dists_parnames,
+            rngs_parnames,
             loglik_parnames,
         ),
     )

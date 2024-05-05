@@ -651,6 +651,7 @@ def gen_loglik_function(
 def gen_rng_function(
     dist: Distribution,
     params: list[Parameter],
+    obs: list[Observation],
     state_vars: list[StateVar],
     trans_state_vars: list[StateVar],
     rng_parnames: list[str],
@@ -658,11 +659,15 @@ def gen_rng_function(
     func_body: list[sl.Stmt] = []
 
     obs_type = dist.obs.obs_type
-    obs_name = dist.obs.name
+    # add _sim to avoid name collision in case of RNGs that require the observation to sample
+    obs_name = f"{dist.obs.name}_sim"
     obs_var = sl.Var(obs_type, obs_name)
+    func_name = f"{dist.obs.name}_rng"
 
     rng_params = [p for p in params if p.name in rng_parnames]
-    par_args = [p.var for p in rng_params]
+    # some RNGs have to make use of observations to sample, such as multinomial_rng
+    rng_obs = [ob for ob in obs if ob.name in rng_parnames]
+    par_args = [p.var for p in rng_params] + [ob.var for ob in rng_obs]
 
     # make sure that state and transformed state variables are defined
     state = State(state_vars + trans_state_vars)
@@ -685,7 +690,7 @@ def gen_rng_function(
 
     rng_func = sl.FuncDef(
         obs_type,  ## function's return type
-        f"{obs_name}_rng",  ## function's name
+        func_name,  ## function's name
         [state_var] + par_args,  ## function's arguments
         func_body,  ## function's body
     )

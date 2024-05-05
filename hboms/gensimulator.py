@@ -82,7 +82,7 @@ def gen_functions_block(
 
     rng_functions = [
         genfunctions.gen_rng_function(
-            dist, params, state, trans_state, rng_parnames=rng_parnames
+            dist, params, obs, state, trans_state, rng_parnames=rng_parnames
         )
         for dist, rng_parnames in zip(dists, rngs_parnames)
     ]
@@ -161,15 +161,15 @@ def gen_trans_data_block(params: list[Parameter]) -> Optional[list[sl.Stmt]]:
 
 
 def gen_gq_block(
-    params,
-    corr_params,
-    state,
-    trans_state,
-    obs,
-    covs,
-    options,
-    ivp_parnames,
-    rngs_parnames,
+    params: list[Parameter],
+    corr_params: list[ParameterBlock],
+    state: list[StateVar],
+    trans_state: list[StateVar],
+    obs: list[Observation],
+    covs: list[Covariate],
+    options: dict,
+    ivp_parnames: list[str],
+    rngs_parnames: list[list[str]],
 ) -> list[sl.Stmt]:
     state_obj = State(state + trans_state)
     state_dim = state_obj.flat_dim()
@@ -185,11 +185,16 @@ def gen_gq_block(
 
     uncorr_params = [p for p in params if not any([(p in cp) for cp in corr_params])]
 
+    # create list of correctly indexed observations (to be used on a unit-timepoint for-loop)
+    obs_vars = [sl.expandVar(ob.var, (R, maxN)) for ob in obs]
+    obs_vars_idx: list[sl.Expr] = [sl.MultiIndexOp(var, [r, n]) for var in obs_vars]
+
     # create list with correctly expanded and indexed parameters
     par_vars = [gencommon.expand_and_index_param(p, apply_idx=True) for p in params]
-    # select parameters used by the rng functions
+    # select parameters used by the rng functions, and also add potential observations used for sampling
     rngs_par_vars = [
-        [pv for pv, p in zip(par_vars, params) if p.name in rng_parnames]
+        [pv for pv, p in zip(par_vars, params) if p.name in rng_parnames] + \
+            [obv for obv, ob in zip(obs_vars_idx, obs) if ob.name in rng_parnames]
         for rng_parnames in rngs_parnames
     ]
     # select parameters used by ivp solver
@@ -321,24 +326,12 @@ def gen_stan_model(
 ) -> sl.StanModel:
     # determine which parameters are required for the log-likelihood function
 
-    # FIXME: instead of deparsing and tokenizing, find variables in an expression directly
-
-    # TODO: there are distributions that use different parameters for RNG and loglik (e.g. multinomial)
-
     parnames = [p.name for p in params]
-
-    dists_pars = [dist.params() for dist in dists]
-    dists_parnames = [
-        util.unique(
-            util.flatten(
-                [
-                    stanlexer.find_used_names(deparse.deparse_expr(par), parnames)
-                    for par in dist_pars
-                ]
-            )
-        )
-        for dist_pars in dists_pars
-    ]
+    obsnames = [ob.name for ob in obs]
+    
+    # some RNGs require observations to sample: such as the multinomial_rng
+    rngs_pars = [dist.params(rng=True) for dist in dists]
+    rngs_parnames = [gencommon.find_varnames(rng_pars, parnames + obsnames) for rng_pars in rngs_pars]
 
     # find parameters required for initial state, odes, and transform
     init_parnames = stanlexer.find_used_names(deparse.deparse_stmt(init), parnames)
@@ -368,7 +361,7 @@ def gen_stan_model(
             init_parnames,
             odes_parnames,
             trans_parnames,
-            dists_parnames,
+            rngs_parnames,
         ),
         gen_data_block(params, corr_params, covs, options),
         gen_trans_data_block(params),
@@ -384,7 +377,7 @@ def gen_stan_model(
             covs,
             options,
             ivp_parnames,
-            dists_parnames,
+            rngs_parnames,
         ),
     )
 

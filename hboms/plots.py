@@ -1,7 +1,7 @@
 import matplotlib  # type: ignore
 import matplotlib.pyplot as plt  # type: ignore
 import numpy as np
-from typing import Literal
+from typing import Literal, Callable
 
 from .observation import Observation
 from .state import StateVar
@@ -12,6 +12,7 @@ def plot_fits(
     data: dict,
     state: list[StateVar],
     obs: list[Observation],
+    transforms: dict[str, Callable] | None = None,
     yscale: Literal["linear", "log"] = "linear",
     ylim: tuple[float, float] | None = None,
     ppd: Literal["bar", "envelope"] | None = "bar",
@@ -29,6 +30,9 @@ def plot_fits(
     fig, axs = plt.subplots(
         nrows, ncols, figsize=(3 * ncols, 2 * nrows), sharex=True, sharey=True
     )
+    
+    # make sure transforms is a dict
+    transforms = {} if transforms is None else transforms
 
     # make a list of observations and their shape
     # scalars have shape ()
@@ -51,6 +55,8 @@ def plot_fits(
             color = colors[j % num_colors]
             ts = Time[r]
             xs = np.array(data[ob.name][r])[(slice(None), *idx)]
+            tra_func = transforms.get(ob.name, lambda x: x)
+            xs = np.vectorize(tra_func)(xs)
             if ob.censored:
                 # highlight censored observations
                 cs = data[ob.cc_name][r]
@@ -63,6 +69,7 @@ def plot_fits(
             else:
                 ax.scatter(ts, xs, s=20, color=color, zorder=2, linewidths=0)
             Xs = sams[f"{ob.name}_sim"][(slice(None), r, slice(None), *idx)]
+            Xs = np.vectorize(tra_func)(Xs)
             lXs, mXs, uXs = np.percentile(Xs, axis=0, q=[2.5, 50, 97.5])
             match ppd:
                 case "bar":
@@ -88,6 +95,8 @@ def plot_fits(
         for j, (var, idx) in enumerate(indexed_state):
             color = colors[j % num_colors]
             traj = sams[f"{var.name}_sim"][(slice(None), r, slice(None), *idx)]
+            tra_func = transforms.get(var.name, lambda x: x)
+            traj = np.vectorize(tra_func)(traj)
             ts = Time[r]
             ts = np.linspace(ts[0], ts[-1], traj.shape[1])
             lx, mx, ux = np.percentile(traj, axis=0, q=[2.5, 50, 97.5])

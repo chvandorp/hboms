@@ -1,4 +1,4 @@
-from typing import List, Union, Literal
+from typing import List, Union, Literal, Optional
 
 from .observation import Observation
 from . import stanlang as sl
@@ -58,9 +58,9 @@ def genstmt_loglik(
     return stmt
 
 
-def genstmt_rng(family: str, obs: str, *pars: sl.Expr) -> sl.Stmt:
+def genstmt_rng(family: str, obs_str: str, *pars: sl.Expr) -> sl.Stmt:
     stmt = sl.Assign(
-        sl.Var(sl.Real(), f"{obs}"),
+        sl.Var(sl.Real(), f"{obs_str}_sim"), # FIXME: this is not always a real number!!
         sl.Call(family + "_rng", list(pars)),
         comment=f"random {family} sample",
     )
@@ -84,7 +84,7 @@ class Distribution:
     def genstmt_rng(self) -> sl.Stmt:
         return sl.EmptyStmt(comment="no rng specified")
 
-    def params(self) -> list[sl.Expr]:
+    def params(self, rng: bool = False) -> list[sl.Expr]:
         return []
 
 
@@ -111,7 +111,7 @@ class NormalDist(Distribution):
         code = genstmt_rng("normal", self._obs.name, self._loc, self._scale)
         return code
 
-    def params(self) -> list[sl.Expr]:
+    def params(self, rng: bool = False) -> list[sl.Expr]:
         return [self._loc, self._scale]
 
 
@@ -142,7 +142,7 @@ class LognormalDist(Distribution):
         stmt = genstmt_rng("lognormal", self._obs.name, self._log_loc, self._scale)
         return stmt
 
-    def params(self) -> list[sl.Expr]:
+    def params(self, rng: bool = False) -> list[sl.Expr]:
         return [self._loc, self._scale]
 
 
@@ -162,7 +162,7 @@ class PoissonDist(Distribution):
         stmt = genstmt_rng("poisson", self._obs.name, self._loc)
         return stmt
 
-    def params(self) -> list[sl.Expr]:
+    def params(self, rng: bool = False) -> list[sl.Expr]:
         return [self._loc]
 
 
@@ -182,7 +182,7 @@ class NegBinomDist(Distribution):
         stmt = genstmt_rng("neg_binomial_2", self._obs.name, self._loc, self._shape)
         return stmt
 
-    def params(self) -> list[sl.Expr]:
+    def params(self, rng: bool = False) -> list[sl.Expr]:
         return [self._loc, self._shape]
 
 
@@ -194,7 +194,8 @@ class StanDist(Distribution):
         self,
         dist_name: str,
         obs: Observation,
-        *params: sl.Expr,
+        params: list[sl.Expr],
+        rng_params: Optional[list[sl.Expr]] = None, 
         discrete: bool | Literal["infer"] = "infer",
         censored: bool | Literal["infer"] = "infer",
     ) -> None:
@@ -202,12 +203,17 @@ class StanDist(Distribution):
         Generic Stan-style distribution. The user can specify if the
         distribution is discrete, or this can be inferred from the observation
         type.
+        Some distributions require a different set of parameters for the RNG.
+        For instance the multinomial distribution. For these, we can specify 
+        a separate list of rng_params.
 
         TODO: more documentation!
         """
         self._obs = obs
         self._dist_name = dist_name
-        self._params = list(params)
+        self._params = params
+        self._rng_params = params if rng_params is None else rng_params
+            
 
         if isinstance(discrete, bool):
             self._discrete = discrete
@@ -239,11 +245,11 @@ class StanDist(Distribution):
         return stmt
 
     def genstmt_rng(self) -> sl.Stmt:
-        stmt = genstmt_rng(self._dist_name, self._obs.name, *self._params)
+        stmt = genstmt_rng(self._dist_name, self._obs.name, *self._rng_params)
         return stmt
 
-    def params(self) -> list[sl.Expr]:
-        return self._params
+    def params(self, rng: bool = False) -> list[sl.Expr]:
+        return self._params if not rng else self._rng_params
 
 
 ### custom distribution

@@ -787,7 +787,8 @@ class HbomsModel:
             StanDist(
                 dist.name,
                 obs_dict[dist.obs_name],
-                *(sl.MixinExpr(x) for x in dist.params),
+                [sl.MixinExpr(x) for x in dist.params],
+                None if dist.rng_params is None else [sl.MixinExpr(x) for x in dist.rng_params]
             )
             for dist in self._model_def.dists
         ]
@@ -1042,6 +1043,7 @@ class HbomsModel:
         state_var_names: list[str] | None = None,
         obs_names: list[str] | None = None,
         n_sim: int = 100,
+        transforms: dict[str, Callable] | None = None,
         **kwargs,
     ) -> plt.Figure:
         """
@@ -1062,6 +1064,9 @@ class HbomsModel:
             observations. The default is None.
         n_sim : int, optional
             Number of time points used for the simulations. The default is 100.
+        transforms : dict[str, Callable] | None, optional
+            Transfomations of variables or observations to be applied pre-plotting.
+            The default is None
         **kwargs
             Additional arguments passed to matplotlib.
 
@@ -1092,7 +1097,9 @@ class HbomsModel:
         # only select certain observations
         plot_obs = self._select_obs(obs_names)
 
-        fig = plots.plot_fits(test_sams, data, plot_state, plot_obs, **kwargs)
+        fig = plots.plot_fits(
+            test_sams, data, plot_state, plot_obs, transforms, **kwargs
+        )
         return fig
 
     def post_pred_check(
@@ -1100,9 +1107,37 @@ class HbomsModel:
         data: dict,
         state_var_names: Optional[list[str]] = None,
         obs_names: list[str] | None = None,
+        transforms: dict[str, Callable] | None = None,
         **kwargs,
     ) -> plt.Figure:
-        """plot the estimated trajectories together with the data"""
+        """
+        plot the estimated trajectories together with the data.
+        
+        Parameters
+        ----------
+        data : dict
+            A dictionary with the data. Must contain fields "Time" and fields
+            for the observations.
+        state_var_names : list[str] | None, optional
+            Choose which trajectories to plot. If None, then plot all
+            trajectories (both state and transformed state).
+            The default is None.
+        obs_names : list[str] | None, optional
+            Choose which observations to plot. If None, then plot all
+            observations. The default is None.
+        transforms : dict[str, Callable] | None, optional
+            Transfomations of variables or observations to be applied pre-plotting.
+            The default is None
+        **kwargs
+            Additional arguments passed to matplotlib.
+
+        Returns
+        -------
+        fig : matplotlib.pyplot.Figure
+            a figure with a panel for each unit. Showing data and trajectories.
+
+        """
+
         match self._fit:
             case None:
                 raise Exception(
@@ -1120,7 +1155,9 @@ class HbomsModel:
         plot_state = self._select_state_vars(state_var_names)
         # only select certain observations
         plot_obs = self._select_obs(obs_names)
-        fig = plots.plot_fits(sams, data, plot_state, plot_obs, **kwargs)
+        fig = plots.plot_fits(
+            sams, data, plot_state, plot_obs, transforms, **kwargs
+        )
         return fig
 
     def set_init(self, init_dict: dict[str, Any]) -> None:

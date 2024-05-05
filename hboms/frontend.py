@@ -2,7 +2,7 @@
 Objects and functions used for HBOMS model definition.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 import numpy as np
 
@@ -43,6 +43,7 @@ class StanDist:
     name: str
     obs_name: str
     params: list[str]
+    rng_params: Optional[list[str]] = field(default=None)
 
 
 @dataclass
@@ -98,6 +99,8 @@ def type_dispatch(tp: str) -> sl.Type:
             return sl.Int()
         case "real":
             return sl.Real()
+        case sl.Type(): ## user-specified stanlang Type
+            return tp
         case _:
             return NotImplementedError(f"cannot convert type {tp}")
 

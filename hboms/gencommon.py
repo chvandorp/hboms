@@ -1,6 +1,8 @@
 from . import stanlang as sl
 from . import utilities as util
 from .parameter import Parameter
+from . import stanlexer, deparse
+
 
 
 def gen_level_matrices(params: list[Parameter]) -> tuple[list[sl.Stmt], list[sl.Stmt]]:
@@ -68,3 +70,23 @@ def expand_and_index_param(p, apply_idx=False):
         case _:
             return p.var
 
+
+
+def find_varnames(exprs: list[sl.Expr], names: list[str]):
+    """
+    Auxilary function used in gen_stan_model in the genmodel and gensimulator
+    modules. It takes a list of stanlang sxpressios and returns the names
+    of all used variables.
+    """
+    
+    # FIXME: instead of deparsing and tokenizing, find variables in an expression directly
+
+    unique_parnames = util.unique(
+        util.flatten(
+            [
+                stanlexer.find_used_names(deparse.deparse_expr(expr), names)
+                for expr in exprs
+            ]
+        )
+    )
+    return unique_parnames
