@@ -457,6 +457,18 @@ class DivOp(Expr):
 
 
 @dataclass
+class EltDivOp(Expr):
+    """
+    element-wise division operator
+
+    Example `[1, 2, 3] ./ [2, 4, 6] == [0.5, 0.5, 0.5]`
+    """
+
+    num: Expr
+    den: Expr
+
+
+@dataclass
 class ModuloOp(Expr):
     """
     modulus operator

@@ -295,6 +295,11 @@ def p_term_div(p):
     p[0] = sl.DivOp(p[1], p[3])
 
 
+def p_term_dotdiv(p):
+    "term : term DOTDIVIDE factor"
+    p[0] = sl.EltDivOp(p[1], p[3])
+
+
 def p_term_modulo(p):
     "term : term MODULUS factor"
     p[0] = sl.ModuloOp(p[1], p[3])

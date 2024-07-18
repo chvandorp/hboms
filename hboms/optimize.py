@@ -214,6 +214,8 @@ def optimize_expr(expr: sl.Expr) -> sl.Expr:
             return sl.EltMulOp(optimize_expr(left), optimize_expr(right))
         case sl.DivOp(left, right):
             return optimize_div_op(left, right)
+        case sl.EltDivOp(left, right):
+            return sl.EltDivOp(optimize_expr(left), optimize_expr(right))
         case sl.ModuloOp(dividend, divisor):
             return optimize_ibin_op("mod", dividend, divisor)
         case sl.IDivOp(left, right):
@@ -409,15 +411,23 @@ def is_atomic_expr(expr: sl.Expr) -> bool:
             return False
         case sl.MulOp(left, right):
             return False
+        case sl.EltMulOp(left, right):
+            return False
         case sl.AddOp(left, right):
             return False
         case sl.SubOp(left, right):
             return False
         case sl.DivOp(left, right):
             return False
+        case sl.EltDivOp(left, right):
+            return False
         case sl.ModuloOp(dividend, divisor):
             return False
         case sl.IDivOp(left, right):
+            return False
+        case sl.PowOp(left, right):
+            return False
+        case sl.EltPowOp(left, right):
             return False
         case sl.MultiIndexOp(var, indices):
             return False
@@ -429,11 +439,11 @@ def is_atomic_expr(expr: sl.Expr) -> bool:
             return False
         case sl.LeOp(left, right):
             return False
-        case sl.GeOp(left, right):
+        case sl.GrOp(left, right):
             return False
         case sl.LeEqOp(left, right):
             return False
-        case sl.GeEqOp(left, right):
+        case sl.GrEqOp(left, right):
             return False
         case sl.TernaryOp(cond, expr_if_true, expr_if_false):
             return False

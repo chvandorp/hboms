@@ -174,6 +174,9 @@ def deparse_expr(expr: sl.Expr) -> str:
         case sl.DivOp(num, den):
             code_str = f"{deparse_expr(num)} / {deparse_expr(den)}"
 
+        case sl.EltDivOp(num, den):
+            code_str = f"{deparse_expr(num)} ./ {deparse_expr(den)}"
+
         case sl.ModuloOp(dividend, divisor):
             code_str = f"{deparse_expr(dividend)} % {deparse_expr(divisor)}"
 

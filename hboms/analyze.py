@@ -36,6 +36,8 @@ def find_variables_expr(expr: sl.Expr) -> list[sl.Var]:
             return find_variables_expr(left) + find_variables_expr(right)
         case sl.DivOp(left, right):
             return find_variables_expr(left) + find_variables_expr(right)
+        case sl.EltDivOp(left, right):
+            return find_variables_expr(left) + find_variables_expr(right)
         case sl.ModuloOp(dividend, divisor):
             return find_variables_expr(dividend) + find_variables_expr(divisor)
         case sl.IDivOp(left, right):
