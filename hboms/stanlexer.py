@@ -36,6 +36,7 @@ tokens = [
     "TIMES",
     "DOTTIMES",
     "DIVIDE",
+    "DOTDIVIDE",
     "IDIVIDE",
     "MODULUS",
     "TRANSPOSE",
