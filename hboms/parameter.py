@@ -1176,3 +1176,26 @@ def param_dispatch(name: str, value: float, par_type: str, **kwargs) -> Paramete
             return IndivParameter(name, value, **kwargs)
         case _:
             raise Exception(f"invalid parameter type '{par_type}'")
+
+
+class TransParameter(Parameter):
+    def __init__(
+        self, 
+        name: str, 
+        lbound: float | None = 0.0, 
+        ubound: float | None = None, 
+        space: ParamSpace = "real"
+    ) -> None:
+        super().__init__(name, 0.0, lbound=lbound, ubound=ubound, space=space)
+
+    def genstmt_trans_params(self) -> List[sl.Stmt]:
+        """
+        Declare and define a transformed parameter.
+        TODO: parse user code to generate a definition. This may depend on
+        other parameters, which determines if it is a individual or population 
+        parameter.
+        """
+        stmts = []
+        decl = sl.Decl(self.var())
+        stmts.append(decl)
+        return stmts
