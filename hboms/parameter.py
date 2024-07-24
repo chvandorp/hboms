@@ -133,8 +133,37 @@ class Parameter(ABC):
     def var(self) -> sl.Var:
         return self._var
 
+    @abstractmethod
+    def expand_and_index_var(self, apply_idx=False) -> sl.Expr:
+        """
+        Implement for all parameter types below.
+        This method should get the right expansion (e.g. `array[R]`)
+        for the type and index (e.g. `theta[r]`) for the variable.
+        Population-level parameters should just return `self.var`
+        """
+        return self._var
+
     def has_covs(self) -> bool:
         return self._catcovs or self._contcovs
+
+    def is_pop_level(self) -> bool:
+        """
+        return True if the parameter is always the same for all units,
+        and therefore does not require indexing.
+        """
+        match self.get_type():
+            case "fixed":
+                return not self.has_covs()
+            case "const" | "trans":
+                return True
+            case _: # includes random, indiv, const_indiv, trans_indiv, ...
+                return False
+    
+    def is_const(self):
+        """
+        return True if the parameter is a constant (i.e. defined in the `data` block)
+        """
+        return self.get_type() in ["const", "const_indiv"]
 
     def genstmt_data(self) -> list[sl.Decl]:
         return []
@@ -150,9 +179,13 @@ class Parameter(ABC):
 
     def genstmt_data_simulator(self) -> list[sl.Decl]:
         return []
+    
+    def genstmt_gq_simulator(self, transform_func: Callable = lambda x: x) -> List[sl.Stmt]:
+        return []
 
 
-## TODO a FixedParameter can have covariates. How to implement?
+
+## TODO a FixedParameter can have continuous covariates. How to implement?
 class FixedParameter(Parameter):
     def __init__(
         self,
@@ -211,6 +244,15 @@ class FixedParameter(Parameter):
 
     def get_type(this):
         return "fixed"
+
+    def expand_and_index_var(self, apply_idx=False) -> sl.Expr:
+        if self.level is None:
+            return self.var
+        idx = self.level.var.idx(sl.intVar("r"))
+        num_params = self.level.num_cat_var
+        if apply_idx:
+            return sl.expandVar(self.var, num_params).idx(idx)
+        return sl.expandVar(self.var, num_params)
 
     def genstmt_data(self):
         decls: list[sl.Decl] = []
@@ -359,6 +401,15 @@ class RandomParameter(Parameter):
 
     def get_type(this) -> str:
         return "random"
+
+    def expand_and_index_var(self, apply_idx=False) -> sl.Expr:
+        R, r = sl.intVar("R"), sl.intVar("r")
+        has_fixed_level = self.level is not None and self.level_type == "fixed"
+        idx = self.level.var.idx(r) if has_fixed_level else r
+        num_params = self.level.num_cat_var if has_fixed_level else R
+        if apply_idx:
+            return sl.expandVar(self.var, (num_params,)).idx(idx)
+        return sl.expandVar(self.var, (num_params,))
 
     def genstmt_data(self) -> list[sl.Stmt]:
         decls: list[sl.Decl] = []
@@ -664,6 +715,9 @@ class ConstParameter(Parameter):
     def get_type(this) -> str:
         return "const"
 
+    def expand_and_index_var(self, apply_idx=False) -> sl.Expr:
+        return self.var
+
     def genstmt_data(self) -> list[sl.Decl]:
         decls: list[sl.Decl] = []
         match self.space:
@@ -683,6 +737,12 @@ class ConstParameter(Parameter):
 class ConstIndivParameter(Parameter):
     def get_type(this) -> str:
         return "const_indiv"
+
+    def expand_and_index_var(self, apply_idx=False) -> sl.Expr:
+        R, r = sl.intVar("R"), sl.intVar("r")
+        if apply_idx:
+            return sl.expandVar(self.var, (R,)).idx(r)
+        return sl.expandVar(self.var, (R,))
 
     def genstmt_data(self) -> list[sl.Decl]:
         decls: list[sl.Decl] = []
@@ -752,6 +812,12 @@ class IndivParameter(Parameter):
 
     def get_type(self) -> str:
         return "indiv"
+
+    def expand_and_index_var(self, apply_idx=False) -> sl.Expr:
+        R, r = sl.intVar("R"), sl.intVar("r")
+        if apply_idx:
+            return sl.expandVar(self.var, (R,)).idx(r)
+        return sl.expandVar(self.var, (R,))
 
     def genstmt_data(self) -> list[sl.Stmt]:
         decls: list[sl.Decl] = []
@@ -952,6 +1018,11 @@ class ParameterBlock(Parameter):
 
     def get_type(self) -> str:
         return "block"
+
+    def expand_and_index_var(self, apply_idx=False) -> sl.Expr:
+        raise NotImplementedError(
+            "Expanding and indexing parameter block variables curently not implemented"
+        )
 
     def genstmt_model(self) -> list[sl.Stmt]:
         ## TODO: how to incorporate categorical covariates here???
@@ -1162,6 +1233,116 @@ def gen_corr_block(corr: Correlation, params: List[Parameter]) -> ParameterBlock
     return ParameterBlock(ps, corr.value, corr.intensity)
 
 
+class TransParameter(Parameter):
+    def __init__(
+        self, 
+        name: str, 
+        value: str,
+        dependencies: list[Parameter] | None = None,
+        rank: int = 0,
+        lbound: float | None = 0.0, 
+        ubound: float | None = None, 
+        space: ParamSpace = "real"
+    ) -> None:
+        super().__init__(name, value, lbound=lbound, ubound=ubound, space=space)
+        self._dependencies = [] if dependencies is None else dependencies
+        self._rank = rank
+
+    def get_type(self) -> str:
+        return "trans"
+    
+    def expand_and_index_var(self, apply_idx=False) -> sl.Expr:
+        return self.var
+
+    def get_rank(self) -> int:
+        """
+        The rank is assigned during the "compilation" stage of the HBOMS model.
+        As transformed parameters can depend on other transformed parameters, we have to 
+        take special care that the values are calculated in the right order.
+        The rank determines this order, and is calculated using the topological order
+        of the dependency graph.
+        """
+        return self._rank
+
+    def genstmt_trans_params(self) -> List[sl.Stmt]:
+        """
+        Declare and define a transformed parameter.
+        """
+        args = [p.var for p in self._dependencies]
+        func_name = f"{self.name}_transform"
+        func_call = sl.Call(func_name, args)
+        decl = sl.DeclAssign(self.var, func_call)
+        return [decl]
+    
+    def genstmt_functions(self) -> List[sl.Stmt]:
+        """
+        We make use of a function to define the transformation
+        """
+        par_args = [p.var for p in self._dependencies]
+        trans_stmt = sl.Return(sl.MixinExpr(self.value))
+        func_body: list[sl.Stmt] = [
+            sl.EmptyStmt(comment="user-defined parameter transform"),
+            trans_stmt
+        ]
+
+        trans_func = sl.FuncDef(
+            self.var.var_type,  ## function's return type
+            f"{self.name}_transform",  ## function's name
+            par_args,  ## function's arguments
+            func_body,  ## function's body
+        )
+        return [trans_func]
+
+    def genstmt_gq_simulator(self, transform_func: Callable = lambda x: x) -> list[sl.Stmt]:
+        return self.genstmt_trans_params()
+        
+
+
+class TransIndivParameter(TransParameter):
+    def get_type(self) -> str:
+        return "trans_indiv"
+
+    def expand_and_index_var(self, apply_idx=False) -> sl.Expr:
+        R, r = sl.intVar("R"), sl.intVar("r")
+        if apply_idx:
+            return sl.expandVar(self.var, (R,)).idx(r)
+        return sl.expandVar(self.var, (R,))
+
+    @property
+    def level(self) -> Optional[CatCovariate]:
+        return None
+
+    @property
+    def level_type(self) -> LevelType:
+        return "fixed"
+
+    def genstmt_trans_params(self) -> List[sl.Stmt]:
+        """
+        Declare and define a transformed parameter.
+        TODO: parse user code to generate a definition. This may depend on
+        other parameters, which determines if it is a individual or population 
+        parameter.
+        """
+        R, r = sl.intVar("R"), sl.intVar("r")
+        expanded_var = self.expand_and_index_var(apply_idx=False)
+        indexed_var = self.expand_and_index_var(apply_idx=True)
+        args = [p.expand_and_index_var(apply_idx=True) for p in self._dependencies]
+        func_name = f"{self.name}_transform"
+        func_call = sl.Call(func_name, args)
+        decl = sl.Decl(expanded_var)
+        assign = sl.Assign(indexed_var, func_call)
+        loop = sl.ForLoop(r, sl.Range(sl.one(), R), assign)
+        return [decl, loop]
+
+    def genstmt_gq_simulator(self, transform_func: Callable = lambda x: x) -> List[sl.Stmt]:
+        indexed_var = self.expand_and_index_var(apply_idx=True)
+        args = [p.expand_and_index_var(apply_idx=True) for p in self._dependencies]
+        func_name = f"{self.name}_transform"
+        func_call = sl.Call(func_name, args)
+        assign = sl.Assign(indexed_var, func_call)
+        return [assign]
+    
+
 def param_dispatch(name: str, value: float, par_type: str, **kwargs) -> Parameter:
     match par_type:
         case "const":
@@ -1174,28 +1355,14 @@ def param_dispatch(name: str, value: float, par_type: str, **kwargs) -> Paramete
             return RandomParameter(name, value, **kwargs)
         case "indiv":
             return IndivParameter(name, value, **kwargs)
+        case "trans":
+            # If all dependencies are population-level parameters, then the 
+            # transformed parameter is also population-level: use TransParameter.
+            # If at least one of the dependencies in individual-level, then we have to
+            # use TransIndivParameter, which is also individual-level.
+            deps = kwargs["dependencies"]
+            if all([p.is_pop_level() for p in deps]):
+                return TransParameter(name, value, **kwargs)
+            return TransIndivParameter(name, value, **kwargs)
         case _:
             raise Exception(f"invalid parameter type '{par_type}'")
-
-
-class TransParameter(Parameter):
-    def __init__(
-        self, 
-        name: str, 
-        lbound: float | None = 0.0, 
-        ubound: float | None = None, 
-        space: ParamSpace = "real"
-    ) -> None:
-        super().__init__(name, 0.0, lbound=lbound, ubound=ubound, space=space)
-
-    def genstmt_trans_params(self) -> List[sl.Stmt]:
-        """
-        Declare and define a transformed parameter.
-        TODO: parse user code to generate a definition. This may depend on
-        other parameters, which determines if it is a individual or population 
-        parameter.
-        """
-        stmts = []
-        decl = sl.Decl(self.var())
-        stmts.append(decl)
-        return stmts

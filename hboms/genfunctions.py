@@ -6,6 +6,7 @@ from . import stanlexer
 from .state import StateVar, State
 from . import stanlang as sl
 from . import deparse
+from . import gencommon
 
 from functools import reduce
 
@@ -283,20 +284,12 @@ def gen_wrapper_function(
         for p in params
         if p.name in set(init_parnames + odes_parnames + trans_parnames)
     ]
-    ivp_pardict = {p.name: p for p in ivp_params}
+    ivp_pardict = {p.name : p for p in ivp_params}
 
     ## make a list of parameter arguments, and choose from upar or ppar and the right index
-    def treat_as_random(p):
-        if p.get_type() in ["random", "indiv"]:
-            return True
-        if p.get_type() == "fixed" and p.has_covs():
-            return True
-        return False
 
-    random_parnames = [p.name for p in ivp_params if treat_as_random(p)]
-    fixed_parnames = [
-        p.name for p in ivp_params if p.get_type() == "fixed" and not p.has_covs()
-    ]
+    random_parnames = [p.name for p in ivp_params if gencommon.treat_as_random(p)]
+    fixed_parnames = [p.name for p in ivp_params if gencommon.treat_as_fixed(p)]
     const_parnames = [
         p.name for p in ivp_params if p.get_type() in ["const", "const_indiv"]
     ]

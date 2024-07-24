@@ -39,13 +39,13 @@ def gen_functions_block(
     ode_function = genfunctions.gen_ode_function(
         odes, params, state, options, odes_parnames
     )
-    functions_block.append(sl.EmptyStmt(comment="vector field"))
+    functions_block.append(sl.comment("vector field"))
     functions_block.append(ode_function)
 
     init_function = genfunctions.gen_init_function(
         init, params, state, options, init_parnames
     )
-    functions_block.append(sl.EmptyStmt(comment="initial condition"))
+    functions_block.append(sl.comment("initial condition"))
     functions_block.append(init_function)
 
     ## optional state transform
@@ -58,13 +58,13 @@ def gen_functions_block(
             options,
             trans_parnames,
         )
-        functions_block.append(sl.EmptyStmt(comment="state transform function"))
+        functions_block.append(sl.comment("state transform function"))
         functions_block.append(state_trans_function)
 
     if options["init_obs"]:
         count_init_obs_function = genfunctions.gen_count_init_obs_function()
         functions_block.append(
-            sl.EmptyStmt(comment="auxiliary func for counting obs time t<=t0")
+            sl.comment("auxiliary func for counting obs time t<=t0")
         )
         functions_block.append(count_init_obs_function)
 
@@ -89,6 +89,9 @@ def gen_functions_block(
     comment_rng = "rng function" + ("s" if len(rng_functions) > 1 else "")
     functions_block.append(sl.comment(comment_rng))
     functions_block += rng_functions
+
+    # add (optional) functions for calculating transformed parameters
+    functions_block += gencommon.gen_all_trans_param_functions(params)
     
     uncorr_random_params = [
         p for p in params 
@@ -98,7 +101,6 @@ def gen_functions_block(
     if any([p.distribution == "logitnormal" for p in uncorr_random_params]):
         functions_block.append(sl.comment("logit-normal rng for bounded parameters"))
         functions_block.append(genfunctions.gen_logitnormal_rng())
-
 
     return functions_block
 
@@ -186,7 +188,7 @@ def gen_gq_block(
     uncorr_params = [p for p in params if not any([(p in cp) for cp in corr_params])]
 
     # create list with correctly expanded and indexed parameters
-    par_vars = [gencommon.expand_and_index_param(p, apply_idx=True) for p in params]
+    par_vars = [p.expand_and_index_var(apply_idx=True) for p in params]
     # select parameters used by the rng functions
     rngs_par_vars = [
         [pv for pv, p in zip(par_vars, params) if p.name in rng_parnames]
@@ -202,12 +204,23 @@ def gen_gq_block(
 
     # random parameter declarations: make sure that the level is correctly handeled
     par_rng_decls = [
-        sl.Decl(gencommon.expand_and_index_param(p, apply_idx=False))
+        sl.Decl(p.expand_and_index_var(apply_idx=False))
         for p in params
         if p.get_type() == "random"
     ]
     declarations.append(sl.comment("random parameter declarations"))
     declarations += par_rng_decls
+
+    # declarations of individual-level transformed parameters
+    trans_par_decls = [
+        sl.Decl(p.expand_and_index_var(apply_idx=False))
+        for p in params
+        if p.get_type() == "trans_indiv"
+    ]
+    if trans_par_decls:
+        declarations.append(sl.comment("transformed parameter declarations"))
+    declarations += trans_par_decls
+
 
     sim_obs = [sl.Var(sl.expandType(ob.obs_type, (R, maxN)), ob.name) for ob in obs]
 
@@ -218,8 +231,7 @@ def gen_gq_block(
 
     # random parameters with a fixed level have to be sampled before the main loop
     level_params = [
-        p
-        for p in uncorr_params
+        p for p in uncorr_params
         if p.get_type() == "random" and p.level is not None and p.level_type == "fixed"
     ]
     levels = util.unique([p.level for p in level_params])
@@ -256,6 +268,14 @@ def gen_gq_block(
     for p in rand_level_params:
         gq_block += p.genstmt_gq_simulator()
 
+    # compute population-level trnasformed parameters
+    trans_params = [p for p in params if p.get_type() == "trans"]
+    trans_params.sort(key=lambda x: x.get_rank())
+    trans_par_stmts = [p.genstmt_gq_simulator() for p in trans_params]
+    if trans_params:
+        gq_block.append(sl.comment("calculate transformed parameters"))
+    gq_block += util.flatten(trans_par_stmts)
+
     # main for loop
     main_loop_content: list[sl.Stmt] = []
 
@@ -273,10 +293,19 @@ def gen_gq_block(
     corr_par_rng_stmts = [
         p.genstmt_gq_simulator(transform_func=trans_func) for p in corr_params
     ]
-    main_loop_content.append(
-        sl.EmptyStmt(comment="sample random correlated parameters")
-    )
+    if corr_par_rng_stmts:
+        main_loop_content.append(
+            sl.EmptyStmt(comment="sample random correlated parameters")
+        )
     main_loop_content += util.flatten(corr_par_rng_stmts)
+
+    # compute individual-level trnasformed parameters
+    trans_params = [p for p in params if p.get_type() == "trans_indiv"]
+    trans_params.sort(key=lambda x: x.get_rank())
+    trans_par_stmts = [p.genstmt_gq_simulator() for p in trans_params]
+    if trans_params:
+        main_loop_content.append(sl.comment("calculate transformed parameters"))
+    main_loop_content += util.flatten(trans_par_stmts)
 
     ivp_args = [Time_r] + ivp_par_vars
     sol = sl.Var(sl.Array(sl.Vector(state_dim), [Nr]), "sol")

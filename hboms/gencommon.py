@@ -36,35 +36,35 @@ def gen_level_matrices(params: list[Parameter]) -> tuple[list[sl.Stmt], list[sl.
     return level_matrix_decls, [level_outer_loop]
 
 
-
-def expand_and_index_param(p, apply_idx=False):
+def treat_as_random(p):
     """
-    Helper function for correctly expanding and indexing individual parameters
-    Used in gen_model_block (for log-likelihood function parameters)
-    and gen_gq_block (for integrating ODEs and computing LLs)
+    rules for how to group types of parameters based on their indexing requirements
     """
-    R = sl.intVar("R")
-    r = sl.intVar("r")
-    match p.get_type():
-        case "random":
-            has_fixed_level = p.level is not None and p.level_type == "fixed"
-            idx = p.level.var.idx(r) if has_fixed_level else r
-            num_params = p.level.num_cat_var if has_fixed_level else R
-            if apply_idx:
-                return sl.expandVar(p.var, (num_params,)).idx(idx)
-            return sl.expandVar(p.var, (num_params,))
-        case "const_indiv" | "indiv":
-            if apply_idx:
-                return sl.expandVar(p.var, (R,)).idx(r)
-            return sl.expandVar(p.var, (R,))
-        case "fixed":
-            if p.level is None:
-                return p.var
-            idx = p.level.var.idx(r)
-            num_params = p.level.num_cat_var
-            if apply_idx:
-                return sl.expandVar(p.var, num_params).idx(idx)
-            return sl.expandVar(p.var, num_params)
-        case _:
-            return p.var
+    if p.get_type() in ["random", "indiv", "trans_indiv"]:
+        return True
+    if p.get_type() == "fixed" and p.has_covs():
+        return True
+    return False
 
+
+def treat_as_fixed(p):
+    if p.get_type() == "trans" or (p.get_type() == "fixed" and not p.has_covs()):
+        return True
+    return False
+
+
+def gen_all_trans_param_functions(params: list[Parameter]) -> list[sl.FuncDef]:
+    """
+    Get all transformed parameters from the parameter list and make function 
+    definitions. Include a comment line.
+    """
+    functions_block: list[sl.Stmt] = []
+    trans_params = [par for par in params if par.get_type() in ["trans", "trans_indiv"]]
+    trans_par_functions = util.flatten([
+        par.genstmt_functions() for par in trans_params
+    ])
+    comment_trans_par = "parameter transform" + ("s" if len(trans_par_functions) > 1 else "")
+    if trans_par_functions:
+        functions_block.append(sl.comment(comment_trans_par))    
+    functions_block += trans_par_functions
+    return functions_block

@@ -13,6 +13,7 @@ from . import deparse
 from . import optimize
 from . import code_checks
 from .transform import logit_transform_dispatch
+from . import stanlexer # required for transformed parameters' dependencies
 
 from cmdstanpy import (
     CmdStanModel,
@@ -24,6 +25,7 @@ import numpy as np
 import scipy.linalg  # cholesky decomposition
 import matplotlib.pyplot as plt  # type: ignore
 import os
+import networkx as nx
 from typing import Optional, Mapping, Callable, Literal, Any
 
 
@@ -124,6 +126,10 @@ def prepare_data(
     covs: list[Covariate],
     n_sim: int,
 ) -> dict:
+    """
+    Auxiliary function to create the right data dictionary accepted by cmdstanpy.
+    Uses user supplied data, but also constant parameters and other required data.
+    """
     Time = data["Time"]
     R = len(Time)
     N = [len(x) for x in Time]
@@ -311,6 +317,10 @@ def prepare_data_simulator(
                 for cov in p._contcovs:
                     w = p._cw_values.get(cov.name, cov.weight_value())
                     stan_data[cov.weight_name(p.name)] = w
+            case "trans" | "trans_indiv":
+                pass # do nothing!
+            case _:
+                raise Exception("invalid parameter type")
 
     # add shapes of non-scalar parameters
     shapes = {
@@ -365,7 +375,6 @@ def prepare_init(
                         raise Exception(
                             f"invalid value type '{type(p.value)}' for parameter '{p.name}'"
                         )
-
             case "fixed":
                 if len(p._catcovs) == 0:
                     value = p.value
@@ -373,7 +382,7 @@ def prepare_init(
                     value = p._cw_values.get(
                         p._catcovs[0].name, p._catcovs[0].loc_value(p.value)
                     )
-            case "const" | "const_indiv":
+            case "const" | "const_indiv" | "trans" | "trans_indiv":
                 pass  # keep value equal to None
             case _:
                 raise Exception(
@@ -730,8 +739,11 @@ class HbomsModel:
                 )
 
             covariates = [covar_dict[cov.name] for cov in self._model_def.covariates]
-        params = []
-        for p in self._model_def.params:
+        
+        params = [None for _ in self._model_def.params]
+        for i, p in enumerate(self._model_def.params):
+            if p.par_type in ["trans", "trans_indiv"]:
+                continue # wait with creating transformed parameters
             covs = None
             if p.covariates is not None:
                 covs = [covar_dict[cov] for cov in p.covariates]
@@ -761,16 +773,55 @@ class HbomsModel:
 
             # remove kwargs with None values
             par_kwargs = {k: v for k, v in par_kwargs.items() if v is not None}
-            params.append(
-                parameter.param_dispatch(
-                    p.name,
-                    p.value,
-                    p.par_type,
-                    lbound=p.lbound,
-                    ubound=p.ubound,
-                    **par_kwargs,
-                )
+            params[i] = parameter.param_dispatch(
+                p.name,
+                p.value,
+                p.par_type,
+                lbound=p.lbound,
+                ubound=p.ubound,
+                **par_kwargs,
             )
+
+        # figure out dependencies between transformed parameters
+        parnames = [p.name for p in self._model_def.params]
+        trans_param_defs = [
+            p for p in self._model_def.params
+            if p.par_type in ["trans", "trans_indiv"]
+        ]
+        trans_param_names = [p.name for p in trans_param_defs]
+        trans_param_dependencies = [
+            stanlexer.find_used_names(p.value, parnames) 
+            for p in trans_param_defs
+        ]
+        dept_graph = nx.DiGraph()
+        for p, deps in zip(trans_param_defs, trans_param_dependencies):
+            for d in deps:
+                dept_graph.add_edge(d, p.name)
+        # check that there are no loops in the dependency graph
+        if not nx.is_directed_acyclic_graph(dept_graph):
+            cycle = nx.find_cycle(dept_graph)
+            cycle_nodes = [e[0] for e in cycle] + [cycle[0][0]]
+            cycle_str = " -> ".join(cycle_nodes)
+            raise Exception(f"dependency graph of transformed parameters contains cycle ({cycle_str})")
+        # else, walk through the parameters in topological order.
+        # if no dependencies, keep user-defined order
+        top_sort = nx.lexicographical_topological_sort(dept_graph, key=lambda x: parnames.index(x))
+        for rank, pn in enumerate(top_sort):
+            if pn not in trans_param_names:
+                continue # skip "regular" (i.e. non-transformed) parameters
+            dep_pars = [params[parnames.index(dn)] for dn in dept_graph.predecessors(pn)]
+            idx = parnames.index(pn)
+            p = self._model_def.params[idx]
+            params[idx] = parameter.param_dispatch(
+                p.name,
+                p.value,
+                p.par_type,
+                lbound=p.lbound,
+                ubound=p.ubound,
+                dependencies=dep_pars,
+                rank=rank
+            )
+
         # we need to have access of observations by name to compile distributions
         obs_dict = {
             ob.name: Observation(

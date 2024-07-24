@@ -9,6 +9,7 @@ from . import stanlang as sl
 from . import deparse
 from . import genfunctions
 from . import gencommon
+from .logger import logger
 
 from functools import reduce
 
@@ -28,20 +29,20 @@ def gen_functions_block(
     odes_parnames: list[str],
     trans_parnames: list[str],
     rngs_parnames: list[list[str]],
-    loglik_parnames: list[str],
+    loglik_parnames: list[str]
 ) -> list[sl.Stmt]:
     functions_block: list[sl.Stmt] = []
 
     ode_function = genfunctions.gen_ode_function(
         odes, params, state, options, odes_parnames
     )
-    functions_block.append(sl.EmptyStmt(comment="vector field"))
+    functions_block.append(sl.comment("vector field"))
     functions_block.append(ode_function)
 
     init_function = genfunctions.gen_init_function(
         init, params, state, options, init_parnames
     )
-    functions_block.append(sl.EmptyStmt(comment="initial condition"))
+    functions_block.append(sl.comment("initial condition"))
     functions_block.append(init_function)
 
     ## optional state transform
@@ -54,13 +55,13 @@ def gen_functions_block(
             options,
             trans_parnames,
         )
-        functions_block.append(sl.EmptyStmt(comment="state transform function"))
+        functions_block.append(sl.comment("state transform function"))
         functions_block.append(state_trans_function)
 
     if options["init_obs"]:
         count_init_obs_function = genfunctions.gen_count_init_obs_function()
         functions_block.append(
-            sl.EmptyStmt(comment="auxiliary func for counting obs time t<=t0")
+            sl.comment("auxiliary func for counting obs time t<=t0")
         )
         functions_block.append(count_init_obs_function)
 
@@ -73,7 +74,7 @@ def gen_functions_block(
         odes_parnames,
         trans_parnames,
     )
-    functions_block.append(sl.EmptyStmt(comment="IVP solver function"))
+    functions_block.append(sl.comment("IVP solver function"))
     functions_block.append(ivp_function)
 
     aux_function = genfunctions.gen_wrapper_function(
@@ -85,13 +86,13 @@ def gen_functions_block(
         odes_parnames,
         trans_parnames,
     )
-    functions_block.append(sl.EmptyStmt(comment="auxiliary function for map_rect"))
+    functions_block.append(sl.comment("auxiliary function for map_rect"))
     functions_block.append(aux_function)
 
     loglik_function = genfunctions.gen_loglik_function(
         dists, params, state, trans_state, obs, options, loglik_parnames=loglik_parnames
     )
-    functions_block.append(sl.EmptyStmt(comment="log-likelihood function"))
+    functions_block.append(sl.comment("log-likelihood function"))
     functions_block.append(loglik_function)
 
     rng_functions = [
@@ -101,8 +102,11 @@ def gen_functions_block(
         for dist, rng_parnames in zip(dists, rngs_parnames)
     ]
     comment_rng = "rng function" + ("s" if len(rng_functions) > 1 else "")
-    functions_block.append(sl.EmptyStmt(comment=comment_rng))
+    functions_block.append(sl.comment(comment_rng))
     functions_block += rng_functions
+
+    # add (optional) functions for calculating transformed parameters
+    functions_block += gencommon.gen_all_trans_param_functions(params)
 
     uncorr_random_params = [
         p
@@ -163,19 +167,32 @@ def gen_trans_param_block(
     RVar = sl.Var(sl.Int(), "R")
     rVar = sl.Var(sl.Int(), "r")
 
+    # create a list of statements
+    statements: list[sl.Stmt] = []
+
+    # compute user-defined parameter transformations. 
+    # Make sure they are defined in the right order, respecting dependencies
+    trans_params = [p for p in params if p.get_type() in ["trans", "trans_indiv"]]
+    ranks = [p.get_rank() for p in trans_params]
+    if not util.is_sorted(ranks):
+        trans_params.sort(key=lambda p: p.get_rank())
+        message = "Due to dependencies between transformed parameters, "
+        message += "the user-defined parameter order has been modified "
+        message += "in the transformed parameters block."
+        logger.info(message)
+
+    trans_par_decls = [p.genstmt_trans_params() for p in trans_params]
+
+    if trans_par_decls:
+        statements.append(sl.comment("user-defined parameter transformations"))
+
+    for stmts in trans_par_decls:
+        statements += stmts
+
     # random and indiv parameters can be treated the same
 
-    ## FIXME: fixed parameters with covariates should be added to random params.
-
-    def treat_as_random(p):
-        if p.get_type() in ["random", "indiv"]:
-            return True
-        if p.get_type() == "fixed" and p.has_covs():
-            return True
-        return False
-
     random_par_objects = [
-        p for p in params if treat_as_random(p) and p.name in ivp_parnames
+        p for p in params if gencommon.treat_as_random(p) and p.name in ivp_parnames
     ]
     random_par_vars = [p.var for p in random_par_objects]
     random_flat_dims = [var.var_type.flat_dim() for var in random_par_vars]
@@ -189,9 +206,7 @@ def gen_trans_param_block(
     # fixed parameters
 
     fixed_par_objects = [
-        p
-        for p in params
-        if p.get_type() == "fixed" and not p.has_covs() and p.name in ivp_parnames
+        p for p in params if gencommon.treat_as_fixed(p) and p.name in ivp_parnames
     ]
     fixed_par_vars: list[sl.Expr] = [p.var for p in fixed_par_objects]
     fixed_flat_dims = [var.var_type.flat_dim() for var in fixed_par_vars]
@@ -201,10 +216,9 @@ def gen_trans_param_block(
     # if all fixed parameters are scalars, we can simplify creating the ppar variable.
     all_ppars_scalar = all([p.space == "real" for p in fixed_par_objects])
 
-    # create a list of statements
-    statements: list[sl.Stmt] = [
+    statements.append(
         sl.Decl(uparsVar, comment="prepare data structure for map_rect")
-    ]
+    )
 
     ppar_assigns: list[sl.Assign] = []
 
@@ -575,7 +589,7 @@ def gen_model_block(
     n = sl.Var(sl.Int(), "n")
     # determine which parameters need a unit-index
     ll_par_args: list[sl.Expr] = [
-        gencommon.expand_and_index_param(p, apply_idx=True)
+        p.expand_and_index_var(apply_idx=True)
         for p in params
         if p.name in loglik_parnames
     ]
@@ -689,7 +703,7 @@ def gen_gq_block(
     statements: list[sl.Stmt] = []  # to be returned
 
     # create list with correctly indexed parameters
-    par_vars = [gencommon.expand_and_index_param(p, apply_idx=True) for p in params]
+    par_vars = [p.expand_and_index_var(apply_idx=True) for p in params]
     # select parameters used by the loglik function
     ll_par_vars = [pv for pv, p in zip(par_vars, params) if p.name in loglik_parnames]
     # select parameters used by the rng functions
@@ -871,7 +885,7 @@ def gen_stan_model(
             odes_parnames,
             trans_parnames,
             dists_parnames,
-            loglik_parnames,
+            loglik_parnames
         ),
         gen_data_block(params, obs, covs, options),
         gen_trans_data_block(

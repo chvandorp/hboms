@@ -89,6 +89,12 @@ def unique(xs: list[GenericType]) -> list[GenericType]:
     return sorted(list(set(xs)))
 
 
+def is_sorted(xs: list[GenericType]) -> list[GenericType]:
+    for i in range(len(xs)-1):
+        if xs[i] > xs[i+1]:
+            return False
+    return True
+
 def find_used_names(code: str, names: list[str]) -> list[str]:
     """
     find all names in a piece of code that are words.
