@@ -91,7 +91,7 @@ def optimize_stmt(stmt: sl.Stmt) -> sl.Stmt:
                 comment=stmt.comment,
             )
         case _:
-            raise Exception("could not optimize stmt", str(stmt))
+            raise Exception("could not optimize stmt " + str(stmt))
 
 
 def optimize_stmt_list(statements: list[sl.Stmt]) -> list[sl.Stmt]:
@@ -166,7 +166,7 @@ def optimize_type(typ: sl.Type) -> sl.Type:
                 optimize_type(return_type), opt_argument_types, data=typ.data
             )
         case _:
-            raise Exception("could not optmized type", str(typ))
+            raise Exception("could not optmized type " + str(typ))
 
 
 def optimize_expr(expr: sl.Expr) -> sl.Expr:
@@ -264,7 +264,7 @@ def optimize_expr(expr: sl.Expr) -> sl.Expr:
         case sl.MixinExpr(code):
             return sl.MixinExpr(code)
         case _:
-            raise Exception("expresion can not be optimized ", expr)
+            raise Exception("expresion can not be optimized " + str(expr))
 
 
 def optimize_expr_list(expressions: list[sl.Expr]) -> list[sl.Expr]:
@@ -460,4 +460,4 @@ def is_atomic_expr(expr: sl.Expr) -> bool:
         case sl.MixinExpr(code):
             return False
         case _:
-            raise Exception("invalid expression type ", expr)
+            raise Exception("invalid expression type " + str(expr))

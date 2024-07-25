@@ -24,6 +24,7 @@ def gen_functions_block(
     trans_state: list[StateVar],
     transform: sl.MixinStmt,
     obs: list[Observation],
+    plugin_code: sl.MixinStmt | None,
     options: dict,
     init_parnames: list[str],
     odes_parnames: list[str],
@@ -32,6 +33,10 @@ def gen_functions_block(
     loglik_parnames: list[str]
 ) -> list[sl.Stmt]:
     functions_block: list[sl.Stmt] = []
+
+    if plugin_code is not None:
+        functions_block.append(sl.comment("User-provided plugin code"))
+        functions_block.append(plugin_code)
 
     ode_function = genfunctions.gen_ode_function(
         odes, params, state, options, odes_parnames
@@ -123,7 +128,10 @@ def gen_functions_block(
 
 
 def gen_parameters_block(
-    params: list[Parameter], corr_params: list[ParameterBlock], options: dict
+    params: list[Parameter], 
+    corr_params: list[ParameterBlock], 
+    plugin_code: sl.MixinStmt | None,
+    options: dict
 ) -> list[sl.Stmt]:
     param_block: list[sl.Stmt] = []
 
@@ -155,12 +163,17 @@ def gen_parameters_block(
         param_block.append(sl.EmptyStmt(comment="correlated individual parameters"))
     param_block += util.flatten([p.genstmt_params() for p in corr_params])
 
+    if plugin_code is not None:
+        param_block.append(sl.comment("User-provided plugin code"))
+        param_block.append(plugin_code)
+
     return param_block
 
 
 def gen_trans_param_block(
     params: list[Parameter],
     corr_params: list[ParameterBlock],
+    plugin_code: sl.MixinStmt | None,
     options: dict,
     ivp_parnames: list[str],
 ) -> list[sl.Stmt]:
@@ -335,6 +348,10 @@ def gen_trans_param_block(
     # add population parameter assignments
     statements += ppar_assigns
 
+    if plugin_code is not None:
+        statements.append(sl.comment("User-provided plugin code"))
+        statements.append(plugin_code)
+
     return statements
 
 
@@ -342,6 +359,7 @@ def gen_data_block(
     params: list[Parameter],
     obs: list[Observation],
     covs: list[Covariate],
+    plugin_code: sl.MixinStmt | None,
     options: dict,
 ) -> list[sl.Stmt]:
     declarations: list[sl.Stmt] = []
@@ -400,11 +418,16 @@ def gen_data_block(
         declarations.append(sl.EmptyStmt(comment="covariates"))
         declarations += util.flatten([cov.genstmt_data() for cov in covs])
 
+    if plugin_code is not None:
+        declarations.append(sl.comment("User-provided plugin code"))
+        declarations.append(plugin_code)
+
     return declarations
 
 
 def gen_trans_data_block(
     params: list[Parameter],
+    plugin_code: sl.MixinStmt | None,
     options: dict,
     ivp_parnames: list[str],
 ) -> list[sl.Stmt]:
@@ -546,11 +569,17 @@ def gen_trans_data_block(
 
     statements = decls + defs + rdats_assigns + shape_assigns
 
+    if plugin_code is not None:
+        statements.append(sl.comment("User-provided plugin code"))
+        statements.append(plugin_code)
+
     return statements
 
 
 def gen_prior(
-    params: list[Parameter], corr_params: list[ParameterBlock], options: dict
+    params: list[Parameter], 
+    corr_params: list[ParameterBlock],
+    options: dict
 ) -> list[sl.Stmt]:
     uncorr_params = [p for p in params if not any([(p in cp) for cp in corr_params])]
 
@@ -574,6 +603,7 @@ def gen_model_block(
     state_vars: list[StateVar],
     trans_state_vars: list[StateVar],
     obs: list[Observation],
+    plugin_code: sl.MixinStmt | None,
     options: dict,
     loglik_parnames: list[str],
 ) -> list[sl.Stmt]:
@@ -665,6 +695,10 @@ def gen_model_block(
         sl.EmptyStmt(comment="prior"),
     ] + prior
 
+    if plugin_code is not None:
+        model_block.append(sl.comment("User-provided plugin code"))
+        model_block.append(plugin_code)
+
     return model_block
 
 
@@ -674,6 +708,7 @@ def gen_gq_block(
     state: list[StateVar],
     trans_state: list[StateVar],
     obs: list[Observation],
+    plugin_code: sl.MixinStmt | None,
     options: dict,
     ivp_parnames: list[str],
     rngs_parnames: list[list[str]],
@@ -816,6 +851,10 @@ def gen_gq_block(
 
     statements.append(loop_units)
 
+    if plugin_code is not None:
+        statements.append(sl.comment("User-provided plugin code"))
+        statements.append(plugin_code)
+
     return statements
 
 
@@ -830,6 +869,7 @@ def gen_stan_model(
     transform: sl.MixinStmt,
     obs: list[Observation],
     covs: list[Covariate],
+    plugin_code: dict[str, sl.MixinStmt],
     options: dict,
 ) -> sl.StanModel:
     # determine which parameters are required for the log-likelihood function
@@ -880,6 +920,7 @@ def gen_stan_model(
             trans_state,
             transform,
             obs,
+            plugin_code.get("functions", None),
             options,
             init_parnames,
             odes_parnames,
@@ -887,20 +928,39 @@ def gen_stan_model(
             dists_parnames,
             loglik_parnames
         ),
-        gen_data_block(params, obs, covs, options),
+        gen_data_block(
+            params, 
+            obs, 
+            covs,
+            plugin_code.get("data", None),
+            options
+        ),
         gen_trans_data_block(
             params,
+            plugin_code.get("transformed data", None),
             options,
             ivp_parnames,
         ),
-        gen_parameters_block(params, corr_params, options),
-        gen_trans_param_block(params, corr_params, options, ivp_parnames),
+        gen_parameters_block(
+            params, 
+            corr_params, 
+            plugin_code.get("parameters", None),
+            options
+        ),
+        gen_trans_param_block(
+            params, 
+            corr_params,
+            plugin_code.get("transformed parameters", None),
+            options, 
+            ivp_parnames
+        ),
         gen_model_block(
             params,
             corr_params,
             state,
             trans_state,
             obs,
+            plugin_code.get("model", None),
             options,
             loglik_parnames,
         ),
@@ -910,6 +970,7 @@ def gen_stan_model(
             state,
             trans_state,
             obs,
+            plugin_code.get("generated quantities", None),
             options,
             ivp_parnames,
             dists_parnames,

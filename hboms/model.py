@@ -204,6 +204,11 @@ def prepare_data(
     stan_data.update(mapped_cat_covariates)
     stan_data.update(num_cats)
 
+    # add additional data provided in the data dict
+    addl_keys = [k for k in data.keys() if k not in stan_data.keys()]
+    for k in addl_keys:
+        stan_data[k] = data[k]
+
     return stan_data
 
 
@@ -637,6 +642,7 @@ class HbomsModel:
         transform: Optional[str] = None,
         covariates: Optional[list[frontend.Covariate]] = None,
         correlations: Optional[list[frontend.Correlation]] = None,
+        plugin_code: Optional[dict[str, str]] = None,
         options: Optional[dict] = None,
         compile_model: bool = True,
         optimize_code: bool = True,
@@ -691,6 +697,10 @@ class HbomsModel:
         correlations : Optional[list[frontend.Correlation]], optional
             A list of correlations between parameters. Use the `Correlation`
             class to define them. The default is None.
+        plugin_code : Optional[dict[str, str]], optional
+            A dictionary with plugin code, i.e. code that is inserted in the
+            code blocks as-is. The keys correspond to the names of the code
+            blocks in the Stan model.
         options : Optional[dict], optional
             A dictionary with additional options. Such as the ODE integrator
             and telerance parameters. The default is None.
@@ -889,6 +899,17 @@ class HbomsModel:
         self._init = sl.MixinStmt(init)
         self._transform = sl.MixinStmt(transform)
 
+        # check that keys in plugin_code are correct
+        plugin_code = {} if plugin_code is None else plugin_code
+        invalid_keys = [k for k in plugin_code.keys() if k not in sl.model_block_names]
+        if invalid_keys:
+            message = "Found keys in plugin code dictionary that do not correspond to "
+            message += "Stan model blocks: " + ", ".join(invalid_keys) + ". "
+            raise Exception(message)
+
+        # TODO: veryfy that plugin code parses. Check other issues?
+        self._plugin_code = {k : sl.MixinStmt(v) for k, v in plugin_code.items()}
+
         # generate the stan model
         AST: sl.Stmt = genmodel.gen_stan_model(
             self._odes,
@@ -901,12 +922,14 @@ class HbomsModel:
             self._transform,
             self._obs,
             self._covs,
+            self._plugin_code,
             self._options,
         )
         # optionally optimize the AST
         self._optimize_code = optimize_code
         if optimize_code:
             AST = optimize.optimize_stmt(AST)
+        self._AST = AST
         self._model_code = deparse.deparse_stmt(AST)
         # set model directory
         if model_dir is None:
