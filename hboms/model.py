@@ -204,8 +204,8 @@ def prepare_data(
     stan_data.update(mapped_cat_covariates)
     stan_data.update(num_cats)
 
-    # add additional data provided in the data dict
-    addl_keys = [k for k in data.keys() if k not in stan_data.keys()]
+    # add additional data provided in the data dict, but skip the "ID" key
+    addl_keys = [k for k in data.keys() if k not in stan_data.keys() and k != "ID"]
     for k in addl_keys:
         stan_data[k] = data[k]
 
