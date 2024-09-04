@@ -33,6 +33,7 @@ class Parameter:
     level: Optional[str] = None
     level_type: Optional[str] = None
     level_scale: Optional[float] = None
+    noncentered: Optional[bool] = None
 
     def __str__(self) -> str:
         return print_parameter(self)

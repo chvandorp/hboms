@@ -183,6 +183,12 @@ def gen_trans_param_block(
     # create a list of statements
     statements: list[sl.Stmt] = []
 
+    # define noncentered parameters from stdnorm random effects
+    noncentered_params = [p for p in params if p.get_type() == "random" and p.noncentered]
+    if len(noncentered_params) > 0:
+        statements.append(sl.comment("non-centered parameterizations"))
+        statements += util.flatten([p.genstmt_trans_params() for p in noncentered_params])
+        
     # compute user-defined parameter transformations. 
     # Make sure they are defined in the right order, respecting dependencies
     trans_params = [p for p in params if p.get_type() in ["trans", "trans_indiv"]]

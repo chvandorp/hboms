@@ -780,6 +780,8 @@ class HbomsModel:
                 par_kwargs["level"] = cov
                 par_kwargs["level_type"] = p.level_type
                 par_kwargs["level_scale"] = p.level_scale
+            if p.noncentered is not None:
+                par_kwargs["noncentered"] = p.noncentered
 
             # remove kwargs with None values
             par_kwargs = {k: v for k, v in par_kwargs.items() if v is not None}
