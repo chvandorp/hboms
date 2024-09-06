@@ -431,6 +431,14 @@ def prepare_init(
             if p.get_type() == "random"
         }
     )
+    # random effects for noncentered parameters
+    init_dict.update(
+        {
+            f"rand_{p.name}": [np.zeros_like(x) for x in init_dict[p.name]]
+            for p in params
+            if p.get_type() == "random" and p.noncentered
+        }
+    )
     # correlated random effects
     init_dict.update(
         {f"block_{p.name}": np.full((R, len(p)), p.value) for p in corr_params}
