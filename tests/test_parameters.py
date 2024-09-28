@@ -47,3 +47,13 @@ class TestParameter:
             "weight_x_theta ~ student_t(3.0, 0.0, 2.5);",
         ]
         assert stmt_strs == expected_strs
+
+    def test_default_prior(self):
+        p = RandomParameter("theta", 1.0, lbound=None, ubound=None)
+        assert p._distribution == "normal"
+
+        p = RandomParameter("theta", 1.0, lbound=0.0, ubound=None)
+        assert p._distribution == "lognormal"
+
+        p = RandomParameter("theta", 1.0, lbound=0.0, ubound=1.0)
+        assert p._distribution == "logitnormal"

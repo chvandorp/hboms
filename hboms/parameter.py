@@ -19,12 +19,14 @@ def select_default_rand_param_dist(
     ## FIXME: non-zero lower bounds
     ## FIXME: (non-zero) upper bounds
     match (lbound, ubound):
+        case (None, None):
+            return "normal"
         case (0.0, None):
             return "lognormal"
         case (float(), float()):
             return "logitnormal"
         case _:
-            # all other cases get (truncated) normal
+            # all other cases get (truncated) normal (FIXME!)
             return "normal"
 
 
@@ -381,7 +383,8 @@ class RandomParameter(Parameter):
         )
 
         if distribution is None:
-            self._distribution = select_default_rand_param_dist(lbound, ubound)
+            # Don't use lbound and ubound as they could be non-floats!
+            self._distribution = select_default_rand_param_dist(self._lbound, self._ubound)
         else:
             ## TODO: check that domain is compatible with distribution
             self._distribution = distribution
