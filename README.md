@@ -210,5 +210,5 @@ a_hat = hbm.fit.stan_variable("a") # hbm.fit is a CmdStanMCMC object
 
 ## Tutorials
 
-In the folder `notebooks` there are a number of tutorials, demonstrating the features of HBOMS. 
-*Currently there are only two notebooks about epidemic models, and within-host infection data with censored observations. This collection will grow!*
+In the folder `docs/notebooks` there are a number of tutorials, demonstrating the features of HBOMS.
+Documentation for HBOMS is hosted on [hboms.readthedocs.io](hboms.readthedocs.io).
