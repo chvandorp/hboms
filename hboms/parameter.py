@@ -439,6 +439,13 @@ class RandomParameter(Parameter):
             self._level_scale = None
         self._level_scale_value = level_scale
 
+        # at this point parameters with a fixed level can't have a categorical covariate
+        # because we would have to "reduce" the covariate to the level (instead of the unit)
+        if level is not None and level_type == "fixed" and self._catcovs:
+            raise NotImplementedError(
+                "parameters with a fixed level can't have a categorical covariate"
+            )
+
         # centered or non-centered parameterization
         self._noncentered = noncentered
 
