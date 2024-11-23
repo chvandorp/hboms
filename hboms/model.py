@@ -250,6 +250,19 @@ def prepare_data_simulator(
     corr_params: list[ParameterBlock],
     covs: list[Covariate],
 ) -> dict:
+    """
+    Take a python dictionary with user-speccified data,
+    and adjust it so that it works for the simulator.
+    
+    The user has to specifty the time points for each unit,
+    using the key "Time". This function adds the number of
+    units (R), the number of time points per unit (N),
+    and looks for covariates (these should also be given by the user).
+
+    In the simulator code, non-random parameters are made constant and 
+    added to the data dictionary. This also holds for locations
+    and scales for random parameters.
+    """
     Time = data["Time"]
     R = len(Time)
     N = [len(x) for x in Time]
@@ -788,6 +801,10 @@ class HbomsModel:
                 par_kwargs["level"] = cov
                 par_kwargs["level_type"] = p.level_type
                 par_kwargs["level_scale"] = p.level_scale
+                if p.level_scale_prior is not None:
+                    par_kwargs["level_scale_prior"] = prior.Prior(
+                        p.level_scale_prior.name, p.level_scale_prior.params
+                    )
             if p.noncentered is not None:
                 par_kwargs["noncentered"] = p.noncentered
 
