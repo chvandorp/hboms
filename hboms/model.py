@@ -737,12 +737,102 @@ class HbomsModel:
             covariates,
             correlations,
         )
+        
+        # use auxiliary funciton to "compile" the model. 
+        # This uses self._model_def
+        params, obs, dists, state, trans_state, covariates, correlations = self._compile_hboms_model()
 
-        """
-        TODO: verify correctness of user input.
-        TODO: move some of the "compilation" code to a separate function
-        """
+        # TODO/FIXME: verify correctness of user input.
 
+        # now store compiled objects as attributes
+        self._model_name = name
+        self._dists = dists
+        self._params = params
+        self._state = state
+        self._obs = obs
+        # optional state transform
+        self._trans_state = trans_state if trans_state is not None else []
+        self._options = complete_options(options)
+        ## optional correlations
+        if correlations is None:
+            self._corr_params = []  # no parameters are correlated
+        else:
+            self._corr_params = [
+                gen_corr_block(corr, self._params) for corr in correlations
+            ]
+        # optional covariates
+        self._covs = covariates if covariates is not None else []
+
+        # check user code
+        state_var_names = [s.name for s in self._state]
+        code_checks.verify_odes(odes, state_var_names)  ## shows warning if not OK
+        code_checks.verify_init(init, state_var_names)
+        # check transform
+        transform = "" if transform is None else transform
+        if len(self._trans_state) > 0:
+            trans_var_names = [s.name for s in self._trans_state]
+            code_checks.verify_transform(transform, trans_var_names)
+
+        # TODO: replace mixins with parsed and resolved ASTs
+        self._odes = sl.MixinStmt(odes)
+        self._init = sl.MixinStmt(init)
+        self._transform = sl.MixinStmt(transform)
+
+        # check that keys in plugin_code are correct
+        plugin_code = {} if plugin_code is None else plugin_code
+        invalid_keys = [k for k in plugin_code.keys() if k not in sl.model_block_names]
+        if invalid_keys:
+            message = "Found keys in plugin code dictionary that do not correspond to "
+            message += "Stan model blocks: " + ", ".join(invalid_keys) + ". "
+            raise Exception(message)
+
+        # TODO: veryfy that plugin code parses. Check other issues?
+        self._plugin_code = {k : sl.MixinStmt(v) for k, v in plugin_code.items()}
+
+        # generate the stan model
+        AST: sl.Stmt = genmodel.gen_stan_model(
+            self._odes,
+            self._init,
+            self._dists,
+            self._params,
+            self._corr_params,
+            self._state,
+            self._trans_state,
+            self._transform,
+            self._obs,
+            self._covs,
+            self._plugin_code,
+            self._options,
+        )
+        # optionally optimize the AST
+        self._optimize_code = optimize_code
+        if optimize_code:
+            AST = optimize.optimize_stmt(AST)
+        self._AST = AST
+        self._model_code = deparse.deparse_stmt(AST)
+        # set model directory
+        if model_dir is None:
+            self._model_dir = os.getcwd()
+        else:
+            self._model_dir = model_dir
+        # compile the stan model
+        self._stan_model: CmdStanModel | None = None
+        if compile_model:
+            self._stan_model = compile_stan_model(
+                self._model_code, self._model_name, self._model_dir
+            )
+
+        # create field that can contain the fit
+        self._fit: CmdStanMCMC | CmdStanVB | CmdStanPathfinder | None = None
+        # create a field that can contain the simulator code
+        self._simulator_code: str | None = None
+        self._stan_simulator: CmdStanModel | None = None
+
+    def _compile_hboms_model(self):
+        """
+        function used by __init__ to compile the self_model_def
+        into usable components.
+        """
         # parse covariates before parameters
         covariates = None
         covar_dict = {}
@@ -874,90 +964,10 @@ class HbomsModel:
                 corr_kwargs = {"value": corr.value, "intensity": corr.intensity}
                 corr_kwargs = {k: v for k, v in corr_kwargs.items() if v is not None}
                 correlations.append(Correlation(parnames=corr.params, **corr_kwargs))
+        
+        # return requires results
+        return params, obs, dists, state, trans_state, covariates, correlations
 
-        # now store compiled objects as attributes
-        self._model_name = name
-        self._dists = dists
-        self._params = params
-        self._state = state
-        self._obs = obs
-        # optional state transform
-        self._trans_state = trans_state if trans_state is not None else []
-        self._options = complete_options(options)
-        ## optional correlations
-        if correlations is None:
-            self._corr_params = []  # no parameters are correlated
-        else:
-            self._corr_params = [
-                gen_corr_block(corr, self._params) for corr in correlations
-            ]
-        # optional covariates
-        self._covs = covariates if covariates is not None else []
-
-        # check user code
-        state_var_names = [s.name for s in self._state]
-        code_checks.verify_odes(odes, state_var_names)  ## shows warning if not OK
-        code_checks.verify_init(init, state_var_names)
-        # check transform
-        transform = "" if transform is None else transform
-        if len(self._trans_state) > 0:
-            trans_var_names = [s.name for s in self._trans_state]
-            code_checks.verify_transform(transform, trans_var_names)
-
-        # TODO: replace mixins with parsed and resolved ASTs
-        self._odes = sl.MixinStmt(odes)
-        self._init = sl.MixinStmt(init)
-        self._transform = sl.MixinStmt(transform)
-
-        # check that keys in plugin_code are correct
-        plugin_code = {} if plugin_code is None else plugin_code
-        invalid_keys = [k for k in plugin_code.keys() if k not in sl.model_block_names]
-        if invalid_keys:
-            message = "Found keys in plugin code dictionary that do not correspond to "
-            message += "Stan model blocks: " + ", ".join(invalid_keys) + ". "
-            raise Exception(message)
-
-        # TODO: veryfy that plugin code parses. Check other issues?
-        self._plugin_code = {k : sl.MixinStmt(v) for k, v in plugin_code.items()}
-
-        # generate the stan model
-        AST: sl.Stmt = genmodel.gen_stan_model(
-            self._odes,
-            self._init,
-            self._dists,
-            self._params,
-            self._corr_params,
-            self._state,
-            self._trans_state,
-            self._transform,
-            self._obs,
-            self._covs,
-            self._plugin_code,
-            self._options,
-        )
-        # optionally optimize the AST
-        self._optimize_code = optimize_code
-        if optimize_code:
-            AST = optimize.optimize_stmt(AST)
-        self._AST = AST
-        self._model_code = deparse.deparse_stmt(AST)
-        # set model directory
-        if model_dir is None:
-            self._model_dir = os.getcwd()
-        else:
-            self._model_dir = model_dir
-        # compile the stan model
-        self._stan_model: CmdStanModel | None = None
-        if compile_model:
-            self._stan_model = compile_stan_model(
-                self._model_code, self._model_name, self._model_dir
-            )
-
-        # create field that can contain the fit
-        self._fit: CmdStanMCMC | CmdStanVB | CmdStanPathfinder | None = None
-        # create a field that can contain the simulator code
-        self._simulator_code: str | None = None
-        self._stan_simulator: CmdStanModel | None = None
 
     @property
     def model_code(self) -> str:
