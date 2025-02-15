@@ -1053,10 +1053,7 @@ class ParameterBlock(Parameter):
     ) -> None:
         self._params = params
         self._name = "_".join([p.name for p in params])
-        unc_values = [
-            constr_to_unconstr_float(p.value, p.lbound, p.ubound) for p in params
-        ]
-        self._value = np.array(unc_values)
+        self.init_value() # set the _value attribute. uses self._params
 
         self._lbound = np.array(
             [p.lbound if p.lbound is not None else -np.inf for p in params]
@@ -1091,6 +1088,20 @@ class ParameterBlock(Parameter):
 
     def __len__(self) -> int:
         return len(self._params)
+
+    def init_value(self) -> None:
+        """
+        Set the value attribute of the parameter block.
+        This uses the values of the parameters in the block.
+        The values are transformed to an unconstrained space.
+
+        FIXME: make sure this works for parameters for which we 
+        specified individual initial values.
+        """
+        unc_values = [
+            constr_to_unconstr_float(p.value, p.lbound, p.ubound) for p in self._params
+        ]
+        self._value = np.array(unc_values)
 
     @property
     def scale_value(self) -> np.array:

@@ -1227,10 +1227,14 @@ class HbomsModel:
             dictionary of initial parameter values.
 
         """
-        for p in self.params:
+        for p in self._params:
             val = init_dict.get(p.name)
             if val is None:
                 continue
             p.value = val
 
-            # FIXME: this does not handle correlated parameters!
+        # reset the value of the parameter blocks
+        # these have references to the parameters
+        # and now can be updated
+        for p in self._corr_params:
+            p.init_value()
