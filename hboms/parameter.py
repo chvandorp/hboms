@@ -370,6 +370,7 @@ class RandomParameter(Parameter):
         level: Optional[CatCovariate] = None,
         level_type: LevelType = "fixed",
         level_scale: float = 1.0,
+        level_scale_prior : Optional[Prior] = None,
         noncentered: bool = False,
     ) -> None:
         super().__init__(
@@ -438,6 +439,16 @@ class RandomParameter(Parameter):
         else:
             self._level_scale = None
         self._level_scale_value = level_scale
+        # set the prior for level_scale to the default or the user-given prior
+        # TODO: we could choose the make the default equal to the scale_prior.
+        self._level_scale_prior = def_hyp_prior if level_scale_prior is None else level_scale_prior
+
+        # at this point parameters with a fixed level can't have a categorical covariate
+        # because we would have to "reduce" the covariate to the level (instead of the unit)
+        if level is not None and level_type == "fixed" and self._catcovs:
+            raise NotImplementedError(
+                "parameters with a fixed level can't have a categorical covariate"
+            )
 
         # centered or non-centered parameterization
         self._noncentered = noncentered
@@ -742,7 +753,7 @@ class RandomParameter(Parameter):
 
         # add prior for level scale parameter
         if self.level is not None and self.level_type == "random":
-            priors += hyper_prior.gen_sampling_stmt(self.level_scale)
+            priors += self._level_scale_prior.gen_sampling_stmt(self._level_scale)
 
         return priors
 

@@ -119,6 +119,16 @@ def get_shape_of_value(val):
             return None
 
 
+def prepare_simulation_times(data: dict, n_sim: int) -> list[list[float]]:
+    """
+    For each unit, create a (dense) list of time points 
+    on which to simulate the trajectories.
+    """
+    Time = data["Time"]
+    TimeSim = [list(np.linspace(t[0], t[-1], n_sim)) for t in Time]
+    return TimeSim
+
+
 def prepare_data(
     data: dict,
     params: list[Parameter],
@@ -133,7 +143,7 @@ def prepare_data(
     Time = data["Time"]
     R = len(Time)
     N = [len(x) for x in Time]
-    TimeSim = [list(np.linspace(t[0], t[-1], n_sim)) for t in Time]
+    TimeSim = prepare_simulation_times(data, n_sim)
     # create data dict for Stan
     stan_data = {
         "R": R,
@@ -250,6 +260,19 @@ def prepare_data_simulator(
     corr_params: list[ParameterBlock],
     covs: list[Covariate],
 ) -> dict:
+    """
+    Take a python dictionary with user-speccified data,
+    and adjust it so that it works for the simulator.
+    
+    The user has to specifty the time points for each unit,
+    using the key "Time". This function adds the number of
+    units (R), the number of time points per unit (N),
+    and looks for covariates (these should also be given by the user).
+
+    In the simulator code, non-random parameters are made constant and 
+    added to the data dictionary. This also holds for locations
+    and scales for random parameters.
+    """
     Time = data["Time"]
     R = len(Time)
     N = [len(x) for x in Time]
@@ -878,6 +901,10 @@ class HbomsModel:
                 par_kwargs["level"] = cov
                 par_kwargs["level_type"] = p.level_type
                 par_kwargs["level_scale"] = p.level_scale
+                if p.level_scale_prior is not None:
+                    par_kwargs["level_scale_prior"] = prior.Prior(
+                        p.level_scale_prior.name, p.level_scale_prior.params
+                    )
             if p.noncentered is not None:
                 par_kwargs["noncentered"] = p.noncentered
 
@@ -1217,9 +1244,41 @@ class HbomsModel:
         fig = plots.plot_fits(sams, data, plot_state, plot_obs, **kwargs)
         return fig
 
+
+    def get_simulation_times(self, data: dict, n_sim: Optional[int] = None) -> list[list[float]]:
+        """
+        Make a list of time points used for simulating trajectories of the model.
+        This is convenient for e.g. plotting the model fits.
+
+        Parameters
+        ----------
+
+        data : dict
+            data dictionary. Must contain the key "Time"
+        n_sim : Optional[int]
+            number of simulation time points. If the model has been fit,
+            this number can be inferred from the chain, if it is not specified
+            by the user. The fefault is None
+
+        Returns
+        -------
+        SimTime : list[list[float]]
+            simulation time points for each unit
+        
+        """
+        if n_sim is None:
+            if self._fit is None:
+                raise Exception("Model does not contain a fit. Specify the n_sim parameter manually")
+            # take the first state variable (include trans_state to account for "solved" models)
+            varname = (self._state + self._trans_state)[0].name
+            n_sim = self._fit.stan_variable(f"{varname}_sim").shape[-1]
+        return prepare_simulation_times(data, n_sim)
+
+
     def set_init(self, init_dict: dict[str, Any]) -> None:
         """
         Set initial parameter guesses to provided values.
+        FIXME: this method is in development!
 
         Parameters
         ----------

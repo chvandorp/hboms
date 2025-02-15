@@ -62,7 +62,9 @@ def plot_fits(
                     )
             else:
                 ax.scatter(ts, xs, s=20, color=color, zorder=2, linewidths=0)
-            Xs = sams[f"{ob.name}_sim"][(slice(None), r, slice(None), *idx)]
+            # make sure that we remove padding from Xs below:
+            Nr = len(ts)
+            Xs = sams[f"{ob.name}_sim"][(slice(None), r, slice(0,Nr), *idx)]
             lXs, mXs, uXs = np.percentile(Xs, axis=0, q=[2.5, 50, 97.5])
             match ppd:
                 case "bar":
