@@ -980,7 +980,7 @@ class HbomsModel:
         return self._simulator_code
 
     @property
-    def fit(self) -> CmdStanMCMC | CmdStanVB:
+    def fit(self) -> CmdStanMCMC | CmdStanVB | CmdStanPathfinder:
         """
         Get access to the fitted Stan model. Make sure to call the method
         `sample`, `variational` or `pathfinder` first.
