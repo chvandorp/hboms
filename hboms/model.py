@@ -1034,7 +1034,7 @@ class HbomsModel:
         """
         # TODO: also return initial parameter values
 
-        return prepare_data(data, self.params, self.obs, self.covs, n_sim)
+        return prepare_data(data, self._params, self._obs, self._covs, n_sim)
 
     def _run(
         self, method: StanInferenceMethod, data: dict, n_sim: int, **kwargs
