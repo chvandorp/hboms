@@ -119,10 +119,24 @@ def gen_functions_block(
         if not any([(p in cp) for cp in corr_params]) and p.get_type() == "random"
     ]
     if any([p.distribution == "logitnormal" for p in uncorr_random_params]):
-        functions_block.append(
-            sl.comment("logit-normal distribution for bounded parameters")
-        )
-        functions_block.append(genfunctions.gen_vectorized_logitnormal_lpdf())
+        # we need the version with an array-valued location parameter
+        # if any of the random parameters has a covariate.
+        # otherwise, we just need the version with scalar location parameter.
+        # in some cases, we need both. Stan allows overloading of functions.
+
+        logitnorm_pars = [
+            p for p in uncorr_random_params if p.distribution == "logitnormal"
+        ]
+        if any([p.has_covs() for p in logitnorm_pars]):
+            functions_block.append(
+                sl.comment("logit-normal distribution for bounded parameters with covariates")
+            )
+            functions_block.append(genfunctions.gen_vectorized_logitnormal_lpdf(array_loc=True))
+        if any([not p.has_covs() for p in logitnorm_pars]):
+            functions_block.append(
+                sl.comment("logit-normal distribution for bounded parameters")
+            )
+            functions_block.append(genfunctions.gen_vectorized_logitnormal_lpdf(array_loc=False))  
 
     return functions_block
 

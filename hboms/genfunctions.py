@@ -77,14 +77,26 @@ def gen_logitnormal_lpdf() -> sl.FuncDef:
     return func_def
 
 
-def gen_vectorized_logitnormal_lpdf() -> sl.FuncDef:
+def gen_vectorized_logitnormal_lpdf(array_loc=False) -> sl.FuncDef:
+    """
+    Generate a vectorized version of the logitnormal_lpdf function.
+
+    If array_loc is True, the function will be generated with an array location
+    parameter, i.e., the location parameters will be vectors of the same length
+    as the input x. Otherwise, the location parameters will be a scalar.
+    Stan allows function overloading, so both versions can be used in the same
+    Stan program.
+    """
     n = sl.intVar("n")
     x = sl.Var(sl.Array(sl.Real(), n), "x")
     nx = sl.Call("num_elements", x)
     z = sl.Var(sl.Vector(nx), "z")
     l = sl.realVar("l")
     u = sl.realVar("u")
-    mu = sl.realVar("mu")
+    if array_loc:
+        mu = sl.Var(sl.Array(sl.Real(), n), "mu")
+    else:
+        mu = sl.realVar("mu")
     sigma = sl.realVar("sigma")
 
     func_body: list[sl.Stmt] = []
