@@ -227,16 +227,25 @@ def gen_ivp_solver_function(
             )
         )
 
-    integration_stmt.append(
-        sl.Assign(
-            sl.MultiIndexOp(sol, [PosRange, sl.Range(sl.one(), ostate_dim)]),
-            sl.Call(
-                integrator,
-                [ode_fun, init_state, t0, PosTime] + tol_pars + odes_vars,
-            ),
-            comment="solve initial value problem",
+    if len(state) == 0:
+        # if there are no state variables, we don't have to use the ODE
+        # solver, and can directly compute the transformed state.
+        # This is useful for when the user has manually solved the 
+        # system of ODEs.
+        integration_stmt.append(sl.comment("No ODEs have to be integrated."))
+    else:
+        # if there are state variables, we have to use the ODE solver
+        # to compute the solution.
+        integration_stmt.append(
+            sl.Assign(
+                sl.MultiIndexOp(sol, [PosRange, sl.Range(sl.one(), ostate_dim)]),
+                sl.Call(
+                    integrator,
+                    [ode_fun, init_state, t0, PosTime] + tol_pars + odes_vars,
+                ),
+                comment="solve initial value problem",
+            )
         )
-    )
 
     # in the case that we have transformed state variables, we have to do some extra work
     if len(trans_state) == 0:

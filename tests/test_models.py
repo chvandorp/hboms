@@ -175,4 +175,4 @@ class TestModel:
 
         llb, lb, uub = np.percentile(rho_hat, q=[0.25, 2.5, 99.75])
 
-        assert llb < rho_gt and rho_gt < uub and lb > 0.0
+        assert llb < rho_gt and rho_gt < uub and lb > 0.0        
