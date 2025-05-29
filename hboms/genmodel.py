@@ -203,6 +203,12 @@ def gen_trans_param_block(
         statements.append(sl.comment("non-centered parameterizations"))
         statements += util.flatten([p.genstmt_trans_params() for p in noncentered_params])
         
+
+    # unpack correlated parameters (NB: make sure to do this before computing transformed parameters)
+    if len(corr_params) > 0:
+        statements.append(sl.EmptyStmt(comment="unpack correlated parameters"))
+    statements += util.flatten([p.genstmt_trans_params() for p in corr_params])
+
     # compute user-defined parameter transformations. 
     # Make sure they are defined in the right order, respecting dependencies
     trans_params = [p for p in params if p.get_type() in ["trans", "trans_indiv"]]
@@ -221,6 +227,9 @@ def gen_trans_param_block(
 
     for stmts in trans_par_decls:
         statements += stmts
+
+
+
 
     # random and indiv parameters can be treated the same
 
@@ -307,9 +316,6 @@ def gen_trans_param_block(
 
     statements.append(ppar_decl)
 
-    if len(corr_params) > 0:
-        statements.append(sl.EmptyStmt(comment="unpack correlated parameters"))
-    statements += util.flatten([p.genstmt_trans_params() for p in corr_params])
 
     # add unit-specific parameters
     if len(random_par_objects) > 0:
