@@ -261,7 +261,7 @@ def prepare_data_simulator(
     covs: list[Covariate],
 ) -> dict:
     """
-    Take a python dictionary with user-speccified data,
+    Take a python dictionary with user-specified data,
     and adjust it so that it works for the simulator.
     
     The user has to specifty the time points for each unit,
@@ -463,9 +463,12 @@ def prepare_init(
         }
     )
     # correlated random effects
-    init_dict.update(
-        {f"block_{p.name}": np.full((R, len(p)), p.value) for p in corr_params}
-    )
+    for p in corr_params:
+        ## take care of the case where the parameter block has a fixed level
+        num_pars = R if p.level is None else numcats[p.level.name]
+        ## i.e. if level is None, then we simply have R units
+        init_dict[f"block_{p.name}"] = np.full((num_pars, len(p)), p.value)
+
     # mean of correlated random effects
     # TODO: categorical covariates for correlated parameters
     # Notice that p.value for ParameterBlock p is already on the unconstraint scale!

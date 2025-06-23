@@ -26,4 +26,5 @@ class TestCorrelation:
         with pytest.raises(Exception) as ex:
             corr = Correlation(parnames, value=wrong_typed_value)
         
+
         

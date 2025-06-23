@@ -175,4 +175,104 @@ class TestModel:
 
         llb, lb, uub = np.percentile(rho_hat, q=[0.25, 2.5, 99.75])
 
-        assert llb < rho_gt and rho_gt < uub and lb > 0.0        
+        assert llb < rho_gt and rho_gt < uub and lb > 0.0
+
+
+    def test_correlation_level_model(self):
+        """
+        Correlated parameters can have a fixed level.
+        Make sure such models compile and estimate 
+        reasonable correlation values.
+        """
+
+        ## use a fixed numpy seed
+        np.random.seed(seed=233423)
+
+        ## set-up the model
+        K_A = 20
+        cat_list = [f"A{i}" for i in range(K_A)]
+
+        covs = [hboms.Covariate("A", "cat", cat_list)]
+
+        params = [
+            hboms.Parameter("a", 1.0, "random", level="A"),
+            hboms.Parameter("b", 1.0, "random", level="A"),
+            hboms.Parameter("sigma", 0.1, "fixed")
+        ]
+
+        corr_gt = 0.7 # the ground truth correlation value
+        Sigma = (1 - corr_gt) * np.eye(2) + corr_gt * np.ones((2,2))
+
+        corrs = [hboms.Correlation(["a", "b"], value=Sigma)]
+        state = [hboms.Variable("x")]
+        odes = "ddt_x = a * x;"
+        init = "x_0 = b;"
+        obs = [hboms.Observation("X")]
+        dists = [hboms.StanDist("lognormal", "X", ["log(x)", "sigma"])]
+
+        model = hboms.HbomsModel(
+            name   = "corr_level_test",
+            params = params,
+            covariates   = covs,
+            correlations = corrs,
+            state  = state,
+            odes   = odes,
+            init   = init,
+            obs    = obs,
+            dists  = dists,
+            model_dir = self.model_dir,
+        )
+
+        ## simulate data
+
+        a_gt, b_gt = 0.1, 0.1
+
+        R, N = 50, 10
+
+        cats = [cat_list[np.random.choice(K_A)] for _ in range(R)]
+
+        ts = np.linspace(1, 10, 10)
+        Time = [ts for _ in range(R)]
+
+        omeg = 0.1 ## standard deviation of the random effects
+        corr_re = np.array([sts.multivariate_normal.rvs(mean=np.zeros(2), cov=Sigma) for _ in range(K_A)])
+
+        a_gt_indiv = a_gt * np.exp(omeg * corr_re[:,0])
+        b_gt_indiv = b_gt * np.exp(omeg * corr_re[:,1])
+
+        cat_idx = [cat_list.index(c) for c in cats]
+
+        sig = 0.01 ##  standard deviation of the measurement noise
+
+        # generate the data
+        Xs = [
+            b_gt_indiv[cat_idx[r]] * np.exp(a_gt_indiv[cat_idx[r]] * ts + sts.norm.rvs(scale=sig, size=N)) 
+            for r in range(R)
+        ]
+
+        ## fit the model
+
+        stan_data = {"Time" : Time, "X" : Xs, "A" : cats}
+        model.sample(
+            stan_data, 
+            step_size=0.01,
+            show_progress=False,
+            chains=1,
+            iter_warmup=500,
+            iter_sampling=500,
+            seed=56756,
+        )
+
+
+        ## compare estimated value with ground truth
+
+        Sigma_est = model.fit.stan_variable("corr_a_b")
+        corr_est = Sigma_est[:,0,1]
+        lb, ub = np.percentile(corr_est, q=[2.5, 97.5])
+
+        assert lb < corr_gt and corr_gt < ub, f"ground truth correlation not in estimated 95% CrI: [{lb:0.3f}, {ub:0.3f}]"
+
+        assert lb > 0, f"estimated correlation is not significantly positive: {lb:0.3f} < 0.0"
+
+
+

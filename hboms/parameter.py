@@ -538,7 +538,7 @@ class RandomParameter(Parameter):
         # but the random effect can also be specified on a group level
         # which is defined by a categorical covariate
         one_par_per_unit = self.level is None or self._level_type == "random"
-        num_pars = R if one_par_per_unit else self._level.num_cat_var
+        num_pars = R if one_par_per_unit else self.level.num_cat_var
         # expand the parameter to the right shape
         # choose between centered and non-centered parameterization
         if self._noncentered:
@@ -1062,6 +1062,21 @@ class ParameterBlock(Parameter):
     def __init__(
         self, params: list[RandomParameter], corr_value: np.ndarray, intensity: float
     ) -> None:
+        # check that all parameters are of the same type
+        if not all(isinstance(p, RandomParameter) for p in params):
+            print([type(p) for p in params])
+            raise TypeError(
+                "ParameterBlock can only be created from a list of RandomParameters"
+            )
+
+        # check the levels of the parameters
+        levels = [p.level for p in params]
+        self._level = levels[0]
+        if not all(self._level == level for level in levels):
+            raise ValueError(
+                "All parameters in a ParameterBlock must have the same level"
+            )
+
         self._params = params
         self._name = "_".join([p.name for p in params])
         self.init_value() # set the _value attribute. uses self._params
@@ -1121,6 +1136,10 @@ class ParameterBlock(Parameter):
     @property
     def corr_value(self) -> np.array:
         return self._corr_value
+
+    @property
+    def level(self) -> Optional[CatCovariate]:
+        return self._level
 
     def get_type(self) -> str:
         return "block"
@@ -1196,8 +1215,11 @@ class ParameterBlock(Parameter):
     def genstmt_params(self) -> list[sl.Decl]:
         n = sl.LiteralInt(len(self._params))
         R = sl.Var(sl.Int(), "R")
+        one_par_per_unit = self.level is None
+        num_pars = R if one_par_per_unit else self.level.num_cat_var
+
         decls = [
-            sl.Decl(sl.Var(sl.Array(sl.Vector(n), (R,)), f"block_{self._name}")),
+            sl.Decl(sl.Var(sl.Array(sl.Vector(n), (num_pars,)), f"block_{self._name}")),
             sl.Decl(sl.Var(sl.Vector(n), f"loc_{self._name}")),
             sl.Decl(sl.Var(sl.Vector(n, lower=sl.rzero()), f"scale_{self.name}")),
             sl.Decl(sl.Var(sl.CholeskyFactorCorr(n), f"chol_{self._name}")),
@@ -1212,7 +1234,10 @@ class ParameterBlock(Parameter):
     def genstmt_trans_params(self) -> list[sl.Stmt]:
         n = sl.LiteralInt(len(self._params))
         R = sl.Var(sl.Int(), "R")
-        blockVar = sl.Var(sl.Array(sl.Vector(n), (R,)), f"block_{self._name}")
+        one_par_per_unit = self.level is None
+        num_pars = R if one_par_per_unit else self.level.num_cat_var
+
+        blockVar = sl.Var(sl.Array(sl.Vector(n), (num_pars,)), f"block_{self._name}")
         # transform unconstrained blocks to correct domain and define parameter names
         vals = [
             sl.MultiIndexOp(blockVar, [sl.fullRange(), sl.LiteralInt(i + 1)])
@@ -1224,7 +1249,7 @@ class ParameterBlock(Parameter):
             for val, p in zip(vals, self._params)
         ]
         trans_decls: list[sl.Stmt] = [
-            sl.DeclAssign(sl.Var(sl.Array(sl.Real(), (R,)), p.name), tr_val)
+            sl.DeclAssign(sl.Var(sl.Array(sl.Real(), (num_pars,)), p.name), tr_val)
             for p, tr_val in zip(self._params, trans_vals)
         ]
 
@@ -1320,7 +1345,7 @@ class ParameterBlock(Parameter):
         multivar_sam = sl.Call("multi_normal_rng", [loc, cov])
         stmts.append(sl.DeclAssign(blockVar, multivar_sam))
 
-        # unpack and transform unconstrain sample
+        # unpack and transform unconstrained sample
         for i, p in enumerate(self._params):
             unpack_stmt = sl.Assign(
                 transform_func(p.var),
