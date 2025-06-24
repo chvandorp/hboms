@@ -14,7 +14,7 @@ making it easier to compare a number of candicate models.
 HBOMS provides methods to fit the Stan models to data, and inspect the results, but the generated code can also
 and further developed independently from the HBOMS package.
 
-Similar or related packages are `brms`, `Monolix` and `Torsten`.
+Similar or related packages are `brms`, `Monolix`, `Torsten`, and `Pumas`.
 
 
 ## Installation

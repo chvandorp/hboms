@@ -21,7 +21,7 @@ def select_default_rand_param_dist(
     match (lbound, ubound):
         case (None, None):
             return "normal"
-        case (0.0, None):
+        case (float(), None) | (None, float()):
             return "lognormal"
         case (float(), float()):
             return "logitnormal"
@@ -659,6 +659,7 @@ class RandomParameter(Parameter):
                                 )
                     else:  # no random level
                         dist_pars = [loc, self._scale]
+                        sam_var = self.var # the variable to-be-sampled
                         if self._distribution == "logitnormal":
                             # logitnormal is defined in the functions block
                             # and requires lower and upper bounds as additional parameters
@@ -667,10 +668,20 @@ class RandomParameter(Parameter):
                                 sl.LiteralReal(self._ubound),
                             ]
                             dist_pars += bound_pars
-
+                            
+                        elif self._distribution == "lognormal":
+                            to_vec = lambda x: sl.Call("to_vector", x)
+                            # apply a linear transformation prior to sample statement
+                            if self._lbound is not None and self._lbound != 0.0:
+                                sam_var = to_vec(self.var) - sl.LiteralReal(self._lbound)
+                            if self._ubound is not None and self._ubound == 0.0:
+                                sam_var = sl.Negate(to_vec(self.var))
+                            if self._ubound is not None and self._ubound != 0.0:
+                                sam_var = sl.LiteralReal(self._ubound) - to_vec(sam_var)
+                            
                         prior_stmts = [
                             sl.Sample(
-                                self.var,
+                                sam_var,
                                 sl.Call(self._distribution, dist_pars),
                             )
                         ]
