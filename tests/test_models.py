@@ -100,13 +100,14 @@ class TestModel:
 
         R = 20
         time = [list(range(1, 11)) for _ in range(R)]
+        np.random.seed(1234)  # for reproducibility
         U = sts.norm.rvs(loc=0, scale=1, size=R)
         data = {"Time": time, "U": U}
         sims = hbm.simulate(data, 1, seed=3452)
         sim_data, sim_params = sims[0]
 
         # fit the model to the simulated data set
-
+        
         hbm.sample(
             sim_data,
             chains=1,
