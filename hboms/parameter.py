@@ -581,6 +581,27 @@ class RandomParameter(Parameter):
         return [decl, for_loop]
 
 
+    def genstmt_hyper_prior(self) -> list[sl.Stmt]:
+        """
+        Generate a list of statements for the hyper prior of the random parameter.
+        This includes the loc and scale parameters, as well as the covariate weights.
+
+        This method is used in genstmt_model, and also in the genstmt_model 
+        method of the ParameterBlock class.
+        """
+        priors: list[sl.Stmt] = []
+        priors += self._loc_prior.gen_sampling_stmt(self._loc)
+        priors += self._scale_prior.gen_sampling_stmt(self._scale)
+        # add hyper prior for covariate weights (TODO: customize)
+        hyper_prior = Prior("student_t", [3.0, 0.0, 2.5])
+        for x in self._cws:
+            priors += hyper_prior.gen_sampling_stmt(x)
+        # add prior for level scale parameter
+        if self.level is not None and self.level_type == "random":
+            priors += self._level_scale_prior.gen_sampling_stmt(self._level_scale)
+        return priors
+
+
     def genstmt_model(self) -> list[sl.Stmt]:
         R = sl.Var(sl.Int(), "R")
         unit_index = sl.Var(sl.Int(), "r")
@@ -753,19 +774,9 @@ class RandomParameter(Parameter):
 
             priors.append(for_loop)
 
-        # add hyper priors for loc and scale parameters
-        priors += self._loc_prior.gen_sampling_stmt(self._loc)
-        priors += self._scale_prior.gen_sampling_stmt(self._scale)
-
-        # add hyper prior for covariate weights (TODO: customize)
-        hyper_prior = Prior("student_t", [3.0, 0.0, 2.5])
-        for x in self._cws:
-            priors += hyper_prior.gen_sampling_stmt(x)
-
-        # add prior for level scale parameter
-        if self.level is not None and self.level_type == "random":
-            priors += self._level_scale_prior.gen_sampling_stmt(self._level_scale)
-
+        # add hyper priors for loc, scale, and covariate weights
+        priors += self.genstmt_hyper_prior()
+ 
         return priors
 
     def genstmt_data_simulator(self) -> list[sl.Decl]:
@@ -1210,15 +1221,18 @@ class ParameterBlock(Parameter):
         # priors for location, scale and correlation matrix
         t_prior = Prior("student_t", [3.0, 0.0, 2.5])
         lkj_prior = Prior("lkj_corr_cholesky", [self._intensity])
-        priors += t_prior.gen_sampling_stmt(locVar)
-        priors += t_prior.gen_sampling_stmt(scaleVar)
+        #priors += t_prior.gen_sampling_stmt(locVar)
+        #priors += t_prior.gen_sampling_stmt(scaleVar)
+        for p in self._params:
+            priors += p.genstmt_hyper_prior()
+
         priors += lkj_prior.gen_sampling_stmt(self._chol)
         # priors of covariate weights
         weight_vars = [
             cn.weight_var(p.name) for p in self._params for cn in p._contcovs
         ]
         for x in weight_vars:
-            priors += t_prior.gen_sampling_stmt(x)
+            priors += t_prior.gen_sampling_stmt(x) ## TODO: possibly have to remove this? Covered by the p.genstmt_hyper_prior() method
 
         # return all prior expressions
         return priors
@@ -1229,10 +1243,14 @@ class ParameterBlock(Parameter):
         one_par_per_unit = self.level is None
         num_pars = R if one_par_per_unit else self.level.num_cat_var
 
+        # declare loc and scale parameters
+        loc_decls = sl.gen_decl_lists([p.loc for p in self._params])
+        scale_decls = sl.gen_decl_lists([p.scale for p in self._params])
+
         decls = [
             sl.Decl(sl.Var(sl.Array(sl.Vector(n), (num_pars,)), f"block_{self._name}")),
-            sl.Decl(sl.Var(sl.Vector(n), f"loc_{self._name}")),
-            sl.Decl(sl.Var(sl.Vector(n, lower=sl.rzero()), f"scale_{self.name}")),
+            #sl.Decl(sl.Var(sl.Vector(n), f"loc_{self._name}")), # TODO: move to transformed parameters
+            #sl.Decl(sl.Var(sl.Vector(n, lower=sl.rzero()), f"scale_{self.name}")), # TODO: idem
             sl.Decl(sl.Var(sl.CholeskyFactorCorr(n), f"chol_{self._name}")),
         ]
 
@@ -1240,7 +1258,7 @@ class ParameterBlock(Parameter):
         decl_cws = [
             sl.Decl(cov.weight_var(p.name)) for p in self._params for cov in p._contcovs
         ]
-        return decls + decl_cws
+        return loc_decls + scale_decls + decls + decl_cws
 
     def genstmt_trans_params(self) -> list[sl.Stmt]:
         n = sl.LiteralInt(len(self._params))
@@ -1248,8 +1266,10 @@ class ParameterBlock(Parameter):
         one_par_per_unit = self.level is None
         num_pars = R if one_par_per_unit else self.level.num_cat_var
 
-        blockVar = sl.Var(sl.Array(sl.Vector(n), (num_pars,)), f"block_{self._name}")
+        trans_decls: list[sl.Stmt] = []
+
         # transform unconstrained blocks to correct domain and define parameter names
+        blockVar = sl.Var(sl.Array(sl.Vector(n), (num_pars,)), f"block_{self._name}")
         vals = [
             sl.MultiIndexOp(blockVar, [sl.fullRange(), sl.LiteralInt(i + 1)])
             for i, _ in enumerate(self._params)
@@ -1259,10 +1279,28 @@ class ParameterBlock(Parameter):
             domain_transform(val, p.lbound, p.ubound, array=True)
             for val, p in zip(vals, self._params)
         ]
-        trans_decls: list[sl.Stmt] = [
-            sl.DeclAssign(sl.Var(sl.Array(sl.Real(), (num_pars,)), p.name), tr_val)
+        trans_decls += [
+            sl.DeclAssign(sl.expandVar(p.var, (num_pars,)), tr_val)
             for p, tr_val in zip(self._params, trans_vals)
         ]
+
+        # define loc and scale parameters
+
+        loc = sl.Var(sl.Vector(n), f"loc_{self._name}")
+        scale = sl.Var(sl.Vector(n, lower=sl.rzero()), f"scale_{self._name}")
+
+        loc_decl = sl.DeclAssign(
+            loc, sl.LiteralVector([p.loc for p in self._params])
+        )
+        scale_decl = sl.DeclAssign(
+            scale, sl.LiteralVector([p.scale for p in self._params])
+        )
+
+        trans_decls += [
+            sl.comment(f"loc and scale vectors for correlated parameter block {self._name}"),
+            loc_decl, scale_decl
+        ]
+
 
         # define weight vectors if there are any covariates
         # group parameters according to covariates, insert zero weights for other parameters
@@ -1299,9 +1337,7 @@ class ParameterBlock(Parameter):
             weight_vecs.append(vec_decl)
 
         trans_decls.append(
-            sl.EmptyStmt(
-                comment="covariate weight vectors for correlated parameter blocks"
-            )
+            sl.comment(f"covariate weight vectors for correlated parameter block {self._name}")
         )
         trans_decls += weight_vecs
 

@@ -35,3 +35,15 @@ class TestStanTypes:
         assert deparse_decl(x) == "tuple(int, real)"
         y = sl.Tuple((x, sl.Vector(sl.LiteralInt(3), lower=sl.LiteralReal(-1.0))))
         assert deparse_decl(y) == "tuple(tuple(int, real), vector<lower=-1.0>[3])"
+
+    def test_type_equality(self):
+        """types with different bounds should not be equal"""
+        x = sl.Real(lower=sl.LiteralReal(0.0))
+        xprime = sl.Real(lower=sl.LiteralReal(0.0))
+        y = sl.Real()
+        z = sl.Real(lower=sl.LiteralReal(1.0))
+        
+        assert x != y
+        assert x == xprime
+        assert x != z
+
