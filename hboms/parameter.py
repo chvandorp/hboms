@@ -1301,7 +1301,6 @@ class ParameterBlock(Parameter):
             loc_decl, scale_decl
         ]
 
-
         # define weight vectors if there are any covariates
         # group parameters according to covariates, insert zero weights for other parameters
         def zero_weight(c: ContCovariate):
