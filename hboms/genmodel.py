@@ -194,11 +194,13 @@ def gen_trans_param_block(
     RVar = sl.Var(sl.Int(), "R")
     rVar = sl.Var(sl.Int(), "r")
 
+    uncorr_params = [p for p in params if not any([(p in cp) for cp in corr_params])]
+
     # create a list of statements
     statements: list[sl.Stmt] = []
 
-    # define noncentered parameters from stdnorm random effects
-    noncentered_params = [p for p in params if p.get_type() == "random" and p.noncentered]
+    # define noncentered parameters from stdnorm random effects (exclude correlated parameters for now)
+    noncentered_params = [p for p in uncorr_params if p.get_type() == "random" and p.noncentered]
     if len(noncentered_params) > 0:
         statements.append(sl.comment("non-centered parameterizations"))
         statements += util.flatten([p.genstmt_trans_params() for p in noncentered_params])

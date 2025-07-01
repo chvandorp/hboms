@@ -31,7 +31,8 @@ def select_default_rand_param_dist(
 
 
 def domain_transform(
-    val: sl.Expr, lbound: Optional[float], ubound: Optional[float], array: bool = False
+    val: sl.Expr, lbound: Optional[float], ubound: Optional[float], array: bool = False,
+    loc: Optional[sl.Expr] = None, scale: Optional[sl.Expr] = None
 ) -> sl.Expr:
     """
     Generate expressions for transforming unconstraint values to a bounded interval.
@@ -47,6 +48,12 @@ def domain_transform(
     array : bool
         is val of type array? In that case we have to convert to array and back.
         The default is False
+    loc : Optional[sl.Expr]
+        optional location parameter for the transformation.
+        used for e.g. noncentered parameters.
+    scale : Optional[sl.Expr]
+        optional scale parameter for the transformation.
+        used for e.g. noncentered parameters.
 
     Raises
     ------
@@ -65,13 +72,35 @@ def domain_transform(
     def to_array(x):
         return sl.Call("to_array_1d", [x]) if array else x
 
+
+    to_vec_applied = True
+    match (loc, scale):
+        case (None, None):
+            # no linear transformation
+            to_vec_applied = False
+        case (sl.Expr(), None):
+            # apply a linear transformation to the value
+            val = loc + to_vec(val)
+        case (None, sl.Expr()):
+            # apply a linear transformation to the value
+            val = to_vec(val) * scale
+        case (sl.Expr(), sl.Expr()):
+            # apply a linear transformation to the value
+            val = loc + scale * to_vec(val)
+        case _:
+            raise Exception("invalid loc and scale parameters for domain transformation")
+
+    if to_vec_applied:
+        # do not apply to_vector twice..."""
+        to_vec = lambda x: x
+
     match (lbound, ubound):
         case (None, None):
-            return val
+            return to_array(val) if to_vec_applied else val
         case (float(), None):
             exp_val = sl.Call("exp", [val])
             if lbound == 0.0:
-                return exp_val
+                return to_array(exp_val) if to_vec_applied else exp_val
             # we have to convert to vector to translate
             exp_vec_val = to_vec(exp_val)
             translated_val = to_array(sl.LiteralReal(lbound) + exp_vec_val)
@@ -88,7 +117,7 @@ def domain_transform(
             lb = sl.LiteralReal(lbound)
             ub = sl.LiteralReal(ubound)
             if lbound == 0.0 and ubound == 1.0:
-                return expit_val
+                return to_array(expit_val) if to_vec_applied else expit_val
             vec_expit_val = to_vec(expit_val)
             if lbound == 0.0:
                 return to_array(ub * vec_expit_val)
@@ -1121,10 +1150,10 @@ class ParameterBlock(Parameter):
         self._scale_value = np.array([p.scale_value for p in params])
 
         self._noncentered = [p.noncentered for p in params]
-        if any(self._noncentered):
-            raise NotImplementedError(
-                "non-centered parameterization is not implemented for correlated parameters"
-            )
+#        if any(self._noncentered):
+#            raise NotImplementedError(
+#                "non-centered parameterization is not implemented for correlated parameters"
+#            )
 
         n = sl.LiteralInt(len(params))
         self._chol = sl.Var(sl.CholeskyFactorCorr(n), f"chol_{self._name}")
@@ -1158,6 +1187,10 @@ class ParameterBlock(Parameter):
     @property
     def corr_value(self) -> np.array:
         return self._corr_value
+
+    @property
+    def noncentered(self) -> list[bool]:
+        return self._noncentered
 
     @property
     def level(self) -> Optional[CatCovariate]:
@@ -1228,11 +1261,11 @@ class ParameterBlock(Parameter):
 
         priors += lkj_prior.gen_sampling_stmt(self._chol)
         # priors of covariate weights
-        weight_vars = [
-            cn.weight_var(p.name) for p in self._params for cn in p._contcovs
-        ]
-        for x in weight_vars:
-            priors += t_prior.gen_sampling_stmt(x) ## TODO: possibly have to remove this? Covered by the p.genstmt_hyper_prior() method
+#        weight_vars = [
+#            cn.weight_var(p.name) for p in self._params for cn in p._contcovs
+#        ]
+#        for x in weight_vars:
+#            priors += t_prior.gen_sampling_stmt(x) ## TODO: possibly have to remove this? Covered by the p.genstmt_hyper_prior() method
 
         # return all prior expressions
         return priors
@@ -1275,8 +1308,16 @@ class ParameterBlock(Parameter):
             for i, _ in enumerate(self._params)
         ]
 
+        # transform the values to the correct domain. For non-centered parameters,
+        # we apply an additional linear transformation to the values.
+        # the transformation is defined by the loc and scale parameters.
+
         trans_vals = [
-            domain_transform(val, p.lbound, p.ubound, array=True)
+            domain_transform(
+                val, p.lbound, p.ubound, array=True, 
+                loc=p.loc if p.noncentered else None,
+                scale=p.scale if p.noncentered else None
+            )
             for val, p in zip(vals, self._params)
         ]
         trans_decls += [
@@ -1289,11 +1330,15 @@ class ParameterBlock(Parameter):
         loc = sl.Var(sl.Vector(n), f"loc_{self._name}")
         scale = sl.Var(sl.Vector(n, lower=sl.rzero()), f"scale_{self._name}")
 
+        # the loc and scale vectors use the loc and scales from the parameters.
+        # if the parameter is non-centered, the loc is zero (and we apply a linear transform later)
+        # for the scales, we use 1.0 for non-centered parameters.
         loc_decl = sl.DeclAssign(
-            loc, sl.LiteralVector([p.loc for p in self._params])
+            loc, sl.LiteralVector([p.loc if not p.noncentered else sl.rzero() for p in self._params])
         )
+        real_one = sl.LiteralReal(1.0)
         scale_decl = sl.DeclAssign(
-            scale, sl.LiteralVector([p.scale for p in self._params])
+            scale, sl.LiteralVector([p.scale if not p.noncentered else real_one for p in self._params])
         )
 
         trans_decls += [

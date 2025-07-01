@@ -14,6 +14,7 @@ from . import optimize
 from . import code_checks
 from .transform import logit_transform_dispatch
 from . import stanlexer # required for transformed parameters' dependencies
+from . import name_checks
 
 from cmdstanpy import (
     CmdStanModel,
@@ -420,13 +421,14 @@ def prepare_init(
         if value is not None:
             init_dict[p.name] = value
 
-    # location of uncorrelated random effects (with no categorical covariates)
+    # location of random parameters (with no categorical covariates)
+    # include correlated parameters: these also get a separate loc and scale
     init_dict.update(
         {
             f"loc_{p.name}": infer_loc(
                 p.value, logit_transform_dispatch(p.lbound, p.ubound)
             )
-            for p in uncorr_params
+            for p in params
             if p.get_type() == "random" and len(p._catcovs) == 0
         }
     )
@@ -442,23 +444,24 @@ def prepare_init(
                     ),
                 )
             )
-            for p in uncorr_params
+            for p in params
             if p.get_type() == "random" and len(p._catcovs) > 0
         }
     )
-    # scale of uncorrelated random effects
+    # scale of random parameters. Include correlated parameters
     init_dict.update(
         {
             f"scale_{p.name}": p.scale_value
-            for p in uncorr_params
+            for p in params
             if p.get_type() == "random"
         }
     )
     # random effects for noncentered parameters
+    # don't include correlated parameters here: these are handled separately
     init_dict.update(
         {
             f"rand_{p.name}": [np.zeros_like(x) for x in init_dict[p.name]]
-            for p in params
+            for p in uncorr_params
             if p.get_type() == "random" and p.noncentered
         }
     )
@@ -467,16 +470,19 @@ def prepare_init(
         ## take care of the case where the parameter block has a fixed level
         num_pars = R if p.level is None else numcats[p.level.name]
         ## i.e. if level is None, then we simply have R units
-        init_dict[f"block_{p.name}"] = np.full((num_pars, len(p)), p.value)
+        val = p.value
+        ## set val to 0 for noncentered parameters
+        val[p.noncentered, ...] = 0.0 ## FIXME: case with individual initial guesses
+        init_dict[f"block_{p.name}"] = np.full((num_pars, len(p)), val.T)
 
     # mean of correlated random effects
     # TODO: categorical covariates for correlated parameters
-    # Notice that p.value for ParameterBlock p is already on the unconstraint scale!
-    init_dict.update(
-        {f"loc_{p.name}": infer_loc(p.value, lambda x: x) for p in corr_params}
-    )
+    # Notice that p.value for ParameterBlock p is already on the unconstrained scale!
+#    init_dict.update(
+#        {f"loc_{p.name}": infer_loc(p.value, lambda x: x) for p in corr_params}
+#    )
     # scale of correlated random effects
-    init_dict.update({f"scale_{p.name}": p.scale_value for p in corr_params})
+#    init_dict.update({f"scale_{p.name}": p.scale_value for p in corr_params})
     # cholesky correlation matrix of correlated random effects
     # NB: Stan uses lower-triangle matrices L
     # TODO: catch errors (complex numbers etc) in decomposition
@@ -499,7 +505,7 @@ def prepare_init(
     return init_dict
 
 
-StanInferenceMethod = Literal["sample", "variational", "pathfinder"]
+StanInferenceMethod = Literal["sample", "variational", "pathfinder"] # TODO: add more methods, incl "optimize"
 
 
 def fit_stan_model(
@@ -763,12 +769,20 @@ class HbomsModel:
             covariates,
             correlations,
         )
-        
-        # use auxiliary funciton to "compile" the model. 
+
+        # Verify correctness of user input.
+
+        # check validity of names
+        name_checks.check_names( ## TODO: include more components: correlations, trans_state
+            [p.name for p in params],
+            [s.name for s in state],
+            [c.name for c in (covariates or [])], # covariates can be None
+            [o.name for o in obs]
+        )
+
+        # use auxiliary function to "compile" the model. 
         # This uses self._model_def
         params, obs, dists, state, trans_state, covariates, correlations = self._compile_hboms_model()
-
-        # TODO/FIXME: verify correctness of user input.
 
         # now store compiled objects as attributes
         self._model_name = name
@@ -1038,6 +1052,12 @@ class HbomsModel:
         # TODO: also return initial parameter values
 
         return prepare_data(data, self._params, self._obs, self._covs, n_sim)
+    
+    def stan_init(self, data: dict) -> dict:
+        """
+        Create a dictionary of initial values for the Stan model parameters.
+        """
+        raise NotImplementedError("HbomsModel.stan_init() is not implemented yet.")
 
     def _run(
         self, method: StanInferenceMethod, data: dict, n_sim: int, **kwargs
