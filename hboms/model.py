@@ -12,7 +12,7 @@ from . import stanlang as sl
 from . import deparse
 from . import optimize
 from . import code_checks
-from .transform import logit_transform_dispatch
+from .transform import logit_transform_dispatch, IdentityTransform
 from . import stanlexer # required for transformed parameters' dependencies
 from . import name_checks
 
@@ -255,6 +255,29 @@ def infer_loc(
             raise Exception(f"invalid value type '{type(values)}' for infer_loc")
 
 
+
+def transform_values_noncentred_param(
+    values: float | np.ndarray | list[float | np.ndarray], scale: float, transform: Callable
+) -> float | np.ndarray | list[float | np.ndarray]:
+    """
+    Transform values for non-centered parameters. For lists,
+    we subtract the mean and divide by the scale.
+    For single values, we return zero.
+    """
+    match values:
+        case list():
+            tvalues = [transform(val) for val in values]
+            loc = np.mean(tvalues, axis=0)
+            zvalues = [(val - loc) / scale for val in tvalues]
+            return zvalues
+        case float() | np.ndarray():
+            return np.zeros_like(values)  # return zero for single values
+        case _:
+            raise Exception(f"invalid value type '{type(values)}' for transform_values_noncentred_param")
+
+
+
+
 def prepare_data_simulator(
     data: dict,
     params: list[Parameter],
@@ -382,7 +405,7 @@ def prepare_init(
         match p.get_type():
             case "random":
                 match p.value:
-                    case int() | float() | np.ndarray():
+                    case float() | np.ndarray():
                         has_fixed_level = (
                             p.level is not None and p.level_type == "fixed"
                         )
@@ -458,22 +481,37 @@ def prepare_init(
     )
     # random effects for noncentered parameters
     # don't include correlated parameters here: these are handled separately
-    init_dict.update(
-        {
-            f"rand_{p.name}": [np.zeros_like(x) for x in init_dict[p.name]]
-            for p in uncorr_params
-            if p.get_type() == "random" and p.noncentered
-        }
-    )
+    uncorr_noncentered_params = [
+        p for p in uncorr_params if p.get_type() == "random" and p.noncentered
+    ]
+    for p in uncorr_noncentered_params:
+        val = init_dict[p.name] ## handled above: values expanded per-unit.
+        zvalues = transform_values_noncentred_param(
+            val, p.scale_value, logit_transform_dispatch(p.lbound, p.ubound)
+        )
+        init_dict[f"rand_{p.name}"] = zvalues
+
     # correlated random effects
     for p in corr_params:
         ## take care of the case where the parameter block has a fixed level
         num_pars = R if p.level is None else numcats[p.level.name]
         ## i.e. if level is None, then we simply have R units
         val = p.value
-        ## set val to 0 for noncentered parameters
-        val[p.noncentered, ...] = 0.0 ## FIXME: case with individual initial guesses
-        init_dict[f"block_{p.name}"] = np.full((num_pars, len(p)), val.T)
+        ## set val to zscores for noncentered parameters
+        for i, nc in enumerate(p.noncentered):
+            if not nc:
+                continue
+            val[i] = transform_values_noncentred_param(
+                val[i], p.scale_value[i], IdentityTransform()
+            )
+        
+        # make a homogeneous block
+        val = [
+            np.full((num_pars,), x) if not isinstance(x, list) else np.array(x)
+            for x in val
+        ]
+
+        init_dict[f"block_{p.name}"] = np.array(val).T
 
     # mean of correlated random effects
     # TODO: categorical covariates for correlated parameters
@@ -1043,21 +1081,38 @@ class HbomsModel:
             )
         return self._fit
 
-    def stan_data(self, data: dict, n_sim: int = 100) -> dict:
+    def stan_data_and_init(self, data: dict, n_sim: int = 100) -> tuple[dict, dict]:
         """
         Make a dictionary required to fit the model. The input is the data
         required for the model. This method adds a number of required items,
         like constants, the number of units, simulation time points. etc.
-        """
-        # TODO: also return initial parameter values
+        The method also returns a dictionary with initial parameter values.
 
-        return prepare_data(data, self._params, self._obs, self._covs, n_sim)
+        Parameters
+        ----------
+        data : dict
+            A dictionary with the data. Must contain at least a field "Time"
+            and fields for the observations.
+        n_sim : int, optional
+            The number of time points for the simulation. This is used to
+            determine the number of time points for the ODE system. The default
+            is 100.
+
+        Returns
+        -------
+        tuple[dict, dict]
+            A tuple with two dictionaries. The first dictionary contains the
+            data required for the Stan model. The second dictionary contains
+            the initial parameter values for the Stan model.
+        """
+        data_dict = prepare_data(data, self._params, self._obs, self._covs, n_sim)
+        _, cat_covs = group_covars(self._covs)
+        num_cats = {cov.name: data_dict[cov.num_cat_var.name] for cov in cat_covs}
+        num_units = data_dict["R"]
+        init_dict = prepare_init(self._params, self._corr_params, num_units, num_cats)
+
+        return data_dict, init_dict
     
-    def stan_init(self, data: dict) -> dict:
-        """
-        Create a dictionary of initial values for the Stan model parameters.
-        """
-        raise NotImplementedError("HbomsModel.stan_init() is not implemented yet.")
 
     def _run(
         self, method: StanInferenceMethod, data: dict, n_sim: int, **kwargs

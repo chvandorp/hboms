@@ -725,7 +725,7 @@ class RandomParameter(Parameter):
                             if self._lbound is not None and self._lbound != 0.0:
                                 sam_var = to_vec(self.var) - sl.LiteralReal(self._lbound)
                             if self._ubound is not None and self._ubound == 0.0:
-                                sam_var = sl.Negate(to_vec(self.var))
+                                sam_var = sl.Negate(to_vec(self.var)) ## FIXME: should we take the reciprocal?
                             if self._ubound is not None and self._ubound != 0.0:
                                 sam_var = sl.LiteralReal(self._ubound) - to_vec(sam_var)
                             
@@ -1175,10 +1175,27 @@ class ParameterBlock(Parameter):
         FIXME: make sure this works for parameters for which we 
         specified individual initial values.
         """
-        unc_values = [
-            constr_to_unconstr_float(p.value, p.lbound, p.ubound) for p in self._params
-        ]
-        self._value = np.array(unc_values)
+        init_defined_per_unit = [isinstance(p.value, list) for p in self._params]
+        num_pars_per_elt = [len(p.value) if x else 1 for p, x in zip(self._params, init_defined_per_unit)]
+        max_num_pars = np.max(num_pars_per_elt)
+        
+        if not all(n == max_num_pars or n == 1 for n in num_pars_per_elt):
+            raise ValueError(
+                "All parameters in a ParameterBlock must have the same number of elements "
+                "or contain only one element per parameter."
+            )
+
+        def fun(p):
+            x = p.value
+            if isinstance(x, list):
+                return [constr_to_unconstr_float(xi, p.lbound, p.ubound) for xi in x]
+            else:
+                return constr_to_unconstr_float(x, p.lbound, p.ubound)
+            
+        unc_values = [fun(p) for p in self._params]
+        
+        self._value = unc_values
+
 
     @property
     def scale_value(self) -> np.array:

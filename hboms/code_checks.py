@@ -28,6 +28,10 @@ def verify_vars_assigned(code: str, var_names: list[str]) -> dict[str, bool]:
     """
 
     vars_assigned = {x: False for x in var_names}
+    if len(code) == 0:
+        # if the code is empty, then no variables are assigned
+        return vars_assigned
+
     stmt_list = stanparser.parser.parse(
         code, lexer=stanparser.lexer
     )  ## FIXME: choose entry point!
@@ -40,6 +44,10 @@ def verify_vars_assigned(code: str, var_names: list[str]) -> dict[str, bool]:
                     vars_assigned[name] = True
             case _:
                 pass
+
+    # FIXME: assignments don't have to ba at top level, so we should
+    # also check for assignments in blocks.
+    
     return vars_assigned
 
 

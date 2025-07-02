@@ -211,4 +211,4 @@ a_hat = hbm.fit.stan_variable("a") # hbm.fit is a CmdStanMCMC object
 ## Tutorials
 
 In the folder `docs/notebooks` there are a number of tutorials, demonstrating the features of HBOMS.
-Documentation for HBOMS is hosted on [hboms.readthedocs.io](hboms.readthedocs.io).
+Documentation for HBOMS is hosted on [hboms.readthedocs.io](https://hboms.readthedocs.io).

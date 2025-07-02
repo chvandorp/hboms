@@ -118,8 +118,8 @@ def logit_transform_dispatch(lower_bound: float | None, upper_bound: float | Non
 
 
 def constr_to_unconstr_float(
-    val: float, lbound: float | None, ubound: float | None
-) -> float:
+    val: float | np.ndarray, lbound: float | None, ubound: float | None
+) -> float | np.ndarray:
     """
     Transform an constraint float to an unconstraint float.
     Unbounded values are returned as-is. Values bounded from below
