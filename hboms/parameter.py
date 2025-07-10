@@ -1468,7 +1468,20 @@ class ParameterBlock(Parameter):
 
 
 def gen_corr_block(corr: Correlation, params: List[Parameter]) -> ParameterBlock:
+    """
+    Generate a ParameterBlock from a Correlation object and a list of parameters.
+    Raises an exception if the correlation contains parameters that are not in the list of parameters.
+    """
     ps = [p for p in params if p.name in corr.parnames]
+    if len(ps) != len(corr.parnames):
+        missing_params = sorted(list(set(corr.parnames) - set(p.name for p in ps)))
+        missing_params = ", ".join(missing_params)    
+        message = (
+            f"Correlation contains parameter names that are not in the model: {missing_params}"
+        )
+        raise ValueError(message)
+    
+    # otherwise, we can create the ParameterBlock
     return ParameterBlock(ps, corr.value, corr.intensity)
 
 
