@@ -625,6 +625,28 @@ def gen_prior(
     return prior
 
 
+
+def gen_prior_samples(
+    params: list[Parameter], 
+    corr_params: list[ParameterBlock],
+) -> list[sl.Stmt]:
+    uncorr_params = [p for p in params if not any([(p in cp) for cp in corr_params])]
+
+    uncorr_prior_samples = util.flatten(
+        [
+            p.genstmt_prior_samples()
+            for p in uncorr_params
+            if p.get_type() not in ["const", "const_indiv"]
+        ]
+    )
+    corr_prior_samples = util.flatten([p.genstmt_prior_samples() for p in corr_params])
+
+    prior_samples = uncorr_prior_samples + corr_prior_samples
+
+    return prior_samples
+
+
+
 def gen_model_block(
     params: list[Parameter],
     corr_params: list[ParameterBlock],
@@ -878,6 +900,12 @@ def gen_gq_block(
     )
 
     statements.append(loop_units)
+
+    if options["prior_samples"]:
+        statements.append(sl.comment("generate prior samples"))
+        statements += gen_prior_samples(params, corr_params)
+
+
 
     if plugin_code is not None:
         statements.append(sl.comment("User-provided plugin code"))

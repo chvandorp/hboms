@@ -281,6 +281,9 @@ class Parameter(ABC):
     
     def genstmt_gq_simulator(self, transform_func: Callable = lambda x: x) -> List[sl.Stmt]:
         return []
+    
+    def genstmt_prior_samples(self) -> List[sl.Stmt]:
+        return []
 
 
 
@@ -380,6 +383,12 @@ class FixedParameter(Parameter):
     def genstmt_data_simulator(self) -> list[sl.Decl]:
         # add data declarations (shapes) and parameter declarations
         return self.genstmt_data() + self.genstmt_params()
+    
+    def genstmt_prior_samples(self) -> List[sl.Stmt]:
+        rng_expr = self._prior.gen_rng_expr()
+        # create declaration and assignment statement
+        # the variable name is `prior_sample_{parameter_name}`
+        return [sl.DeclAssign(sl.Var(self.var.var_type, f"prior_sample_{self._name}"), rng_expr)]
 
 
 class RandomParameter(Parameter):
@@ -917,6 +926,21 @@ class RandomParameter(Parameter):
             shape_transform(sl.Call(self._distribution + "_rng", rng_params)),
         )
         return [rng_stmt]
+    
+    def genstmt_prior_samples(self) -> List[sl.Stmt]:
+        loc_rng_expr = self._loc_prior.gen_rng_expr()
+        scale_rng_expr = self._scale_prior.gen_rng_expr()
+        rng_params = [loc_rng_expr, scale_rng_expr]
+        match self._distribution:
+            case "logitnormal":
+                rng_params += [sl.LiteralReal(self._lbound), sl.LiteralReal(self._ubound)]
+            case _:
+                pass
+        rng_expr = sl.Call(self._distribution + "_rng", rng_params)
+        # create declaration and assignment statement
+        # the variable name is `prior_sample_{parameter_name}`
+        return [sl.DeclAssign(sl.Var(self.var.var_type, f"prior_sample_{self._name}"), rng_expr)]
+
 
 
 class ConstParameter(Parameter):
@@ -1069,6 +1093,13 @@ class IndivParameter(Parameter):
 
     def genstmt_data_simulator(self) -> list[sl.Decl]:
         return self.genstmt_data() + self.genstmt_params()
+    
+
+    def genstmt_prior_samples(self) -> List[sl.Stmt]:
+        rng_expr = self._prior.gen_rng_expr()
+        # create declaration and assignment statement
+        # this is done in the same way as fixed parameters.
+        return [sl.DeclAssign(sl.Var(self.var.var_type, f"prior_sample_{self._name}"), rng_expr)]
 
 
 ## test functions for checking that correlations are well defined
@@ -1465,6 +1496,23 @@ class ParameterBlock(Parameter):
 
         # we have to wrap this in a Scope to allow for a declaration
         return [sl.Scope(stmts)]
+    
+
+    def genstmt_prior_samples(self) -> List[sl.Stmt]:
+        ## FIXME (?) : we currently ignore correlations when generating prior samples
+
+        from hboms.logger import logger
+
+        logger.warning(
+            "Prior samples for correlated parameters are generated independently"
+        )
+
+        stmts = []
+
+        for p in self._params:
+            stmts += p.genstmt_prior_samples()
+
+        return stmts
 
 
 def gen_corr_block(corr: Correlation, params: List[Parameter]) -> ParameterBlock:

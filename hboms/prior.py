@@ -28,7 +28,19 @@ class Prior:
         return self._params
 
     def gen_sampling_stmt(self, par: sl.Expr) -> list[sl.Stmt]:
+        """
+        Generate "sampling statement" from the prior distribution for the given parameter expression.
+        """
         lits: list[sl.Expr] = [sl.LiteralReal(x) for x in self._params]
         trans_par = self._transform(par)
         stmts: list[sl.Stmt] = [sl.Sample(trans_par, sl.Call(self._name, lits))]
         return stmts
+    
+    def gen_rng_expr(self) -> sl.Expr:
+        """
+        Generate an expression that generates a sample from the prior distribution.        
+        """
+        lits: list[sl.Expr] = [sl.LiteralReal(x) for x in self._params]
+        ## FIXME: apply transform? Add inverse transform with jacobian correction?
+        expr: sl.Expr = sl.Call(f"{self._name}_rng", lits)
+        return expr

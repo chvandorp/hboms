@@ -662,6 +662,7 @@ DEFAULT_OPTIONS = {
     "abs_tol": 1e-6,
     "max_num_steps": 1000000,
     "init_obs": False,
+    "prior_samples": False,
 }
 
 
