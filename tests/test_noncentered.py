@@ -1,6 +1,8 @@
+import pytest
 import hboms
 import numpy as np
 import scipy.stats as sts
+import os
 
 
 def compile_model(params, correlations):
@@ -22,6 +24,13 @@ def compile_model(params, correlations):
 
 
 class TestNonCentered:
+    @pytest.fixture(autouse=True) 
+    def _setup(self):
+        self.model_dir = os.path.join("tests", "stan-cache")
+        # set fixed seed for numpy
+        np.random.seed(4563)
+        
+
     def test_noncentered(self):
         """
         make sure that the non-centered parameterization is equivalent to the centered one.
@@ -29,9 +38,6 @@ class TestNonCentered:
         We use the Kolmogorov-Smirnov test to check if the posterior distributions
         of the parameters are the same for both models.
         """
-
-        # set fixed seed for numpy
-        np.random.seed(4563)
 
         params1 = [
             hboms.Parameter(
@@ -65,7 +71,7 @@ class TestNonCentered:
             odes = odes,
             init = init,
             dists = dists,
-            model_dir="tests/stan-cache",
+            model_dir=self.model_dir,
         ) 
 
         # model with non-centered parameterization
@@ -77,7 +83,7 @@ class TestNonCentered:
             odes = odes,
             init = init,
             dists = dists,
-            model_dir="tests/stan-cache",
+            model_dir=self.model_dir,
         )
 
         num_units = 20
@@ -313,7 +319,7 @@ class TestNonCentered:
             correlations=corrs,
             state=state,
             trans_state=trans_state,
-            model_dir="tests/stan-cache",
+            model_dir=self.model_dir,
         )
 
         model2 = hboms.HbomsModel(
@@ -327,7 +333,7 @@ class TestNonCentered:
             correlations=corrs,
             state=state,
             trans_state=trans_state,
-            model_dir="tests/stan-cache",
+            model_dir=self.model_dir,
         )
 
         ## simulate data (does not matter which model we use)
