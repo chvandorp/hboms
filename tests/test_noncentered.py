@@ -383,3 +383,4 @@ class TestNonCentered:
         assert c1l < corr_gt < c1u, "correlation for centered model should be close to ground truth"
         assert c2l < corr_gt < c2u, "correlation for non-centered model should be close to ground truth"
 
+

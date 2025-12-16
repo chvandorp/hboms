@@ -52,6 +52,15 @@ def gen_count_init_obs_function() -> sl.FuncDef:
 
 
 def gen_logitnormal_lpdf() -> sl.FuncDef:
+    """
+    This is the simplest version of the logitnormal_lpdf function,
+    Both the random variable and the location parameter are scalars.
+
+    Returns
+    -------
+    sl.FuncDef
+        Stan function definition for logitnormal_lpdf
+    """
     x = sl.realVar("x")
     z = sl.realVar("z")
     l = sl.realVar("l")

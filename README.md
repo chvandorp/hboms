@@ -19,11 +19,13 @@ Similar or related packages are `brms`, `Monolix`, `Torsten`, and `Pumas`.
 
 ## Installation
 
-Download the source code from the github repository. For instance with
+Currently, HBOMS can not be installed from PyPI, but it can be installed 
+with `pip`: First download the source code from the github repository. 
+For instance with
 ```bash
 $ git clone git@github.com:chvandorp/hboms.git
 ```
-Then create a virtual environment with `venv` and activate (this is optional)
+Then create a virtual environment with `venv` and activate
 ```bash
 $ python3 -m venv myvenv
 $ source myvenv/bin/activate

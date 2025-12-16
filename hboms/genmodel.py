@@ -14,6 +14,49 @@ from .logger import logger
 from functools import reduce
 
 
+def require_logitnormal_functions(
+    params: list[Parameter],
+    corr_params: list[ParameterBlock],
+) -> bool:
+    """
+    Function to determine if we have to add require_logitnormal 
+    lpdf and rng functions.
+    Instead of determinign which specific functions are required,
+    we simply return a boolean indicating whether any logitnormal
+    functions are needed. In that case, we always add all versions.
+    
+    Parameters
+    ----------
+    params : list[Parameter]
+        List of all parameters in the model.
+    corr_params : list[ParameterBlock]
+        List of correlated parameter blocks.
+    
+    Returns
+    -------
+    bool
+        A boolean indicating whether any logitnormal functions are required.
+    """
+    def is_correlated_param(p: Parameter) -> bool:
+        return any([(p in cp) for cp in corr_params])
+    
+    # check if any parameter has a logitnormal prior
+    for p in params:
+        match p.get_type():
+            case "fixed" | "indiv":
+                if p.prior_name == "logitnormal":
+                    return True
+            case "random":
+                if (
+                    p.loc_prior_name == "logitnormal" or 
+                    p.scale_prior_name == "logitnormal" or 
+                    (not is_correlated_param(p) and p.distribution == "logitnormal")
+                ):
+                    return True
+    
+    return False
+
+
 def gen_functions_block(
     odes: sl.MixinStmt,
     init: sl.MixinStmt,
@@ -113,30 +156,37 @@ def gen_functions_block(
     # add (optional) functions for calculating transformed parameters
     functions_block += gencommon.gen_all_trans_param_functions(params)
 
-    uncorr_random_params = [
-        p
-        for p in params
-        if not any([(p in cp) for cp in corr_params]) and p.get_type() == "random"
-    ]
-    if any([p.distribution == "logitnormal" for p in uncorr_random_params]):
-        # we need the version with an array-valued location parameter
-        # if any of the random parameters has a covariate.
-        # otherwise, we just need the version with scalar location parameter.
-        # in some cases, we need both. Stan allows overloading of functions.
 
-        logitnorm_pars = [
-            p for p in uncorr_random_params if p.distribution == "logitnormal"
-        ]
-        if any([p.has_covs() for p in logitnorm_pars]):
-            functions_block.append(
-                sl.comment("logit-normal distribution for bounded parameters with covariates")
-            )
-            functions_block.append(genfunctions.gen_vectorized_logitnormal_lpdf(array_loc=True))
-        if any([not p.has_covs() for p in logitnorm_pars]):
-            functions_block.append(
-                sl.comment("logit-normal distribution for bounded parameters")
-            )
-            functions_block.append(genfunctions.gen_vectorized_logitnormal_lpdf(array_loc=False))  
+    # add (optional) functions for logitnormal distribution if needed
+    # we only need this for uncorrelated parameters
+    # as correlated parameters are sampled on the unrestricted scale
+    # Notice that the user can specify logitnormal distributions for
+    # random, fixed, and indiv parameters.
+
+    require_logitnormal = require_logitnormal_functions(
+        params, corr_params
+    )
+    if require_logitnormal:
+        functions_block.append(
+            sl.comment("logit-normal distribution for bounded scalar parameters")
+        )
+        functions_block.append(genfunctions.gen_logitnormal_lpdf()) 
+
+        functions_block.append(
+            sl.comment("logit-normal distribution for bounded parameters with covariates")
+        )
+        functions_block.append(genfunctions.gen_vectorized_logitnormal_lpdf(array_loc=True))
+
+        functions_block.append(
+            sl.comment("logit-normal distribution for bounded parameters")
+        )
+        functions_block.append(genfunctions.gen_vectorized_logitnormal_lpdf(array_loc=False))  
+
+    if require_logitnormal and options["prior_samples"]:
+        functions_block.append(
+            sl.comment("logit-normal random number generator")
+        )
+        functions_block.append(genfunctions.gen_logitnormal_rng())
 
     return functions_block
 
@@ -632,14 +682,15 @@ def gen_prior_samples(
 ) -> list[sl.Stmt]:
     uncorr_params = [p for p in params if not any([(p in cp) for cp in corr_params])]
 
-    uncorr_prior_samples = util.flatten(
-        [
-            p.genstmt_prior_samples()
-            for p in uncorr_params
-            if p.get_type() not in ["const", "const_indiv"]
-        ]
-    )
-    corr_prior_samples = util.flatten([p.genstmt_prior_samples() for p in corr_params])
+    uncorr_prior_samples = util.flatten([
+        p.genstmt_prior_samples()
+        for p in uncorr_params
+        if p.get_type() not in ["const", "const_indiv"]
+    ])
+
+    corr_prior_samples = util.flatten([
+        p.genstmt_prior_samples() for p in corr_params
+    ])
 
     prior_samples = uncorr_prior_samples + corr_prior_samples
 
@@ -656,6 +707,7 @@ def gen_model_block(
     plugin_code: sl.MixinStmt | None,
     options: dict,
     loglik_parnames: list[str],
+    include_likelihood: bool = True, # whether to include likelihood
 ) -> list[sl.Stmt]:
     state = State(state_vars + trans_state_vars)
     state_dim = state.flat_dim()
@@ -737,13 +789,21 @@ def gen_model_block(
 
     ll_for_loop = sl.ForLoop(r, sl.Range(sl.one(), R), sl.Scope([inner_for_loop]))
 
-    model_block = [
-        sl.EmptyStmt(comment="solve ODEs in parallel"),
-        integration,
-        sl.EmptyStmt(comment="compute log-likelihood of observations"),
-        ll_for_loop,
-        sl.EmptyStmt(comment="prior"),
-    ] + prior
+    model_block: list[sl.Stmt] = []
+
+    if include_likelihood:
+        model_block = [
+            sl.EmptyStmt(comment="solve ODEs in parallel"),
+            integration,
+            sl.EmptyStmt(comment="compute log-likelihood of observations"),
+            ll_for_loop,
+            sl.EmptyStmt(comment="prior"),
+        ] + prior
+    else:
+        model_block = [
+            sl.EmptyStmt(comment="likelihood is omitted..."),
+            sl.EmptyStmt(comment="prior")
+        ] + prior
 
     if plugin_code is not None:
         model_block.append(sl.comment("User-provided plugin code"))
@@ -927,6 +987,7 @@ def gen_stan_model(
     covs: list[Covariate],
     plugin_code: dict[str, sl.MixinStmt],
     options: dict,
+    include_likelihood: bool = True, # whether to include the likelihood in the model block
 ) -> sl.StanModel:
     # determine which parameters are required for the log-likelihood function
 
@@ -1019,6 +1080,7 @@ def gen_stan_model(
             plugin_code.get("model", None),
             options,
             loglik_parnames,
+            include_likelihood=include_likelihood,
         ),
         gen_gq_block(
             params,

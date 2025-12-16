@@ -2,6 +2,7 @@ from typing import List, Optional, Sequence, Callable, Literal
 from abc import ABC, abstractmethod
 import numpy as np
 from functools import reduce
+import copy
 
 from . import utilities as util
 from . import stanlang as sl
@@ -243,6 +244,10 @@ class Parameter(ABC):
         return self._var
 
     def has_covs(self) -> bool:
+        """
+        Return True if the parameter has any covariates
+        (categorical or continuous). Else return False.
+        """
         return self._catcovs or self._contcovs
 
     def is_pop_level(self) -> bool:
@@ -343,6 +348,10 @@ class FixedParameter(Parameter):
     @property
     def level_type(self) -> LevelType:
         return "fixed"
+    
+    @property
+    def prior_name(self) -> str:
+        return self._prior.name
 
     def get_type(this):
         return "fixed"
@@ -501,10 +510,6 @@ class RandomParameter(Parameter):
                 raise NotImplementedError(
                     "non-centered parameterization is not implemented for random levels"
                 )
-            if self._catcovs:
-                raise NotImplementedError(
-                    "non-centered parameterization is not implemented for categorical covariates"
-                )
             if self._contcovs:
                 raise NotImplementedError(
                     "non-centered parameterization is not implemented for continuous covariates"
@@ -547,6 +552,14 @@ class RandomParameter(Parameter):
     def noncentered(self) -> bool:
         return self._noncentered
 
+    @property
+    def loc_prior_name(self) -> str:
+        return self._loc_prior.name
+    
+    @property
+    def scale_prior_name(self) -> str:
+        return self._scale_prior.name
+
     def get_type(this) -> str:
         return "random"
 
@@ -580,8 +593,10 @@ class RandomParameter(Parameter):
         # expand the parameter to the right shape
         # choose between centered and non-centered parameterization
         if self._noncentered:
-            rand_effect_type = self._stan_type
+            # create a new variable for the random effect
+            rand_effect_type = copy.deepcopy(self._stan_type)
             # the random effect is unrestricted: set lbound and ubound to None
+            # without deepcopy this would modify self._stan_type as well!
             rand_effect_type.lower, rand_effect_type.upper = None, None
             rand_effect = sl.Var(rand_effect_type, f"rand_{self._name}")
             array = sl.expandVar(rand_effect, (num_pars,))
@@ -605,7 +620,14 @@ class RandomParameter(Parameter):
         array = sl.expandVar(self.var, (num_pars,))
         rand_effect = sl.Var(self._stan_type, f"rand_{self._name}")
         rand_effect_array = sl.expandVar(rand_effect, (num_pars,))
-        lin_trans_rand_effect = self._loc + self._scale * rand_effect_array.idx(r)
+        # allow for categorical covariates by selecting the correct loc value
+        loc = self._loc 
+        if self._catcovs:
+            cat = self._catcovs[0].var.idx(r) # the category for unit r
+            loc = loc.idx(cat) # the loc for that category
+        scale = self._scale
+        # linear transformation of the random effect
+        lin_trans_rand_effect = loc + scale * rand_effect_array.idx(r)
         decl = sl.Decl(array)
         # use a for loop to fill the array with transformed values
         for_loop = sl.ForLoop(
@@ -1041,6 +1063,10 @@ class IndivParameter(Parameter):
     @property
     def level_type(self) -> LevelType:
         return "fixed"
+    
+    @property
+    def prior_name(self) -> str:
+        return self._prior.name
 
     def get_type(self) -> str:
         return "indiv"
@@ -1146,7 +1172,6 @@ class ParameterBlock(Parameter):
     ) -> None:
         # check that all parameters are of the same type
         if not all(isinstance(p, RandomParameter) for p in params):
-            print([type(p) for p in params])
             raise TypeError(
                 "ParameterBlock can only be created from a list of RandomParameters"
             )
@@ -1181,10 +1206,6 @@ class ParameterBlock(Parameter):
         self._scale_value = np.array([p.scale_value for p in params])
 
         self._noncentered = [p.noncentered for p in params]
-#        if any(self._noncentered):
-#            raise NotImplementedError(
-#                "non-centered parameterization is not implemented for correlated parameters"
-#            )
 
         n = sl.LiteralInt(len(params))
         self._chol = sl.Var(sl.CholeskyFactorCorr(n), f"chol_{self._name}")
@@ -1263,15 +1284,12 @@ class ParameterBlock(Parameter):
         L = sl.Call("diag_pre_multiply", [scaleVar, self._chol])
         covVars = {cov.name: sl.expandVar(cov.var, (R,)) for cov in self._contcovs}
 
-        # TODO: use sl.expandVecVar to expand scalars to row_vector and vector to matrix
-
         weightVars: dict[str, sl.Expr] = {}
         for cov in self._contcovs:
             if cov.dim is None:
-                wvar = sl.Var(sl.Vector(n), cov.weight_name(self._name))
+                wvar = sl.expandVecVar(cov.weight_var(self._name), n)
             else:
-                d = sl.LiteralInt(cov.dim)
-                wvart = sl.Var(sl.Matrix(d, n), cov.weight_name(self._name))
+                wvart = sl.expandVecVar(cov.weight_var(self._name), n)
                 wvar = sl.TransposeOp(wvart)
             weightVars[cov.name] = wvar
 
@@ -1300,21 +1318,11 @@ class ParameterBlock(Parameter):
             ]
 
         # priors for location, scale and correlation matrix
-        t_prior = Prior("student_t", [3.0, 0.0, 2.5])
         lkj_prior = Prior("lkj_corr_cholesky", [self._intensity])
-        #priors += t_prior.gen_sampling_stmt(locVar)
-        #priors += t_prior.gen_sampling_stmt(scaleVar)
         for p in self._params:
             priors += p.genstmt_hyper_prior()
 
         priors += lkj_prior.gen_sampling_stmt(self._chol)
-        # priors of covariate weights
-#        weight_vars = [
-#            cn.weight_var(p.name) for p in self._params for cn in p._contcovs
-#        ]
-#        for x in weight_vars:
-#            priors += t_prior.gen_sampling_stmt(x) ## TODO: possibly have to remove this? Covered by the p.genstmt_hyper_prior() method
-
         # return all prior expressions
         return priors
 
@@ -1330,8 +1338,6 @@ class ParameterBlock(Parameter):
 
         decls = [
             sl.Decl(sl.Var(sl.Array(sl.Vector(n), (num_pars,)), f"block_{self._name}")),
-            #sl.Decl(sl.Var(sl.Vector(n), f"loc_{self._name}")), # TODO: move to transformed parameters
-            #sl.Decl(sl.Var(sl.Vector(n, lower=sl.rzero()), f"scale_{self.name}")), # TODO: idem
             sl.Decl(sl.Var(sl.CholeskyFactorCorr(n), f"chol_{self._name}")),
         ]
 
@@ -1415,13 +1421,13 @@ class ParameterBlock(Parameter):
         for cov in self._contcovs:
             if cov.dim is None:
                 vec_decl = sl.DeclAssign(
-                    sl.Var(sl.Vector(n), cov.weight_name(self._name)),
+                    sl.expandVecVar(cov.weight_var(self._name), n),
                     sl.LiteralVector(cov_par_dict[cov.name]),
                 )
             else:
                 d = sl.LiteralInt(cov.dim)
                 vec_decl = sl.DeclAssign(
-                    sl.Var(sl.Matrix(d, n), cov.weight_name(self._name)),
+                    sl.expandVecVar(cov.weight_var(self._name), n),
                     sl.LiteralVector(
                         [sl.TransposeOp(x) for x in cov_par_dict[cov.name]]
                     ),

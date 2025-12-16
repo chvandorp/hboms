@@ -906,6 +906,11 @@ class HbomsModel:
         # create a field that can contain the simulator code
         self._simulator_code: str | None = None
         self._stan_simulator: CmdStanModel | None = None
+        # create a field that can contain the prior sampler code
+        self._prior_sampler_code: str | None = None
+        self._stan_prior_sampler: CmdStanModel | None = None
+        # create a field that can contain the prior predictive fit
+        self._prior_fit: CmdStanMCMC | None = None
 
     def _compile_hboms_model(self):
         """
@@ -1081,6 +1086,27 @@ class HbomsModel:
                 "HbomsModel.variational() or HbomsModel.pathfinder()."
             )
         return self._fit
+    
+    @property
+    def prior_fit(self) -> CmdStanMCMC:
+        """
+        Get access to the prior predictive fit of the Stan model. Make sure
+        to call the method `sample_from_prior` first.
+        TODO: perhaps prior_fit is not a good name as we're not fitting to
+        any data here...
+
+        Returns
+        -------
+        CmdStanMCMC
+            The prior predictive fit of the Stan model.
+
+        """
+        if self._prior_fit is None:
+            raise Exception(
+                f"HbomsModel {self._model_name} has not been sampled from the prior yet."
+                "First use method HbomsModel.sample_from_prior()."
+            )
+        return self._prior_fit
 
     def stan_data_and_init(self, data: dict, n_sim: int = 100) -> tuple[dict, dict]:
         """
@@ -1215,6 +1241,73 @@ class HbomsModel:
             seed,
         )
         return simulations
+    
+
+    def sample_from_prior(
+        self,
+        data: dict,
+        n_sim: int = 100,
+        compile_prior_sampler: bool = True,
+        **kwargs,
+    ) -> None:
+        """
+        Sample from the prior distribution of the model. This is done
+        by compiling a model that ignores the observations and only
+        simulates from the prior.
+
+        Parameters
+        ----------
+        data : dict
+            A dictionary with the data. Must contain at least a field "Time"
+            and fields for the observations and covariates.
+        n_sim : int, optional
+            The number of time points for the simulation. The default is 100.
+        compile_prior_sampler : bool, optional
+            If False, don't compile the prior sampling code. This is used for debugging.
+            The default is True.
+        **kwargs
+            Additional arguments passed to cmdstanpy.
+
+        """
+        AST = genmodel.gen_stan_model(
+            self._odes,
+            self._init,
+            self._dists,
+            self._params,
+            self._corr_params,
+            self._state,
+            self._trans_state,
+            self._transform,
+            self._obs,
+            self._covs,
+            self._plugin_code,
+            self._options,
+            include_likelihood=False,
+        )
+        if self._optimize_code:
+            AST = optimize.optimize_stmt(AST)
+        self._prior_sampler_code = deparse.deparse_stmt(AST)
+        if not compile_prior_sampler:
+            return []
+        # else, go ahead and compile and simulate
+        prior_sampler_name = self._model_name + "_prior_sampler"
+        self._stan_prior_sampler = compile_stan_model(
+            self._prior_sampler_code, prior_sampler_name, self._model_dir
+        )
+
+        # next, sample from the prior
+        self._prior_fit = fit_stan_model(
+            self._stan_prior_sampler,
+            data,
+            self._params,
+            self._corr_params,
+            self._obs,
+            self._covs,
+            n_sim,
+            method="sample",
+            **kwargs,
+        )
+
 
     def _select_state_vars(self, state_var_names: list[str] | None = None):
         ext_state = self._state + self._trans_state

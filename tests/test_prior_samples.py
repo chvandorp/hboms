@@ -109,6 +109,54 @@ class TestFixedPriorSamples:
         assert np.abs(np.std(sample_a) - self.a_std_gt) < 0.1, err_msg
 
 
+    def test_prior_samples_generation_logitnormal(self):
+        # Test that prior samples are generated correctly for logitnormal prior
+        # This requires a custom RNG in Stan
+
+        lbound = -1.0
+        ubound = 2.5
+
+        # modify parameter prior to logitnormal
+        params = self.params.copy() # make a copy to avoid modifying other tests
+        params[0] = hboms.Parameter(
+            "a", 0.0, "fixed", lbound=lbound, ubound=ubound,
+            prior=hboms.StanPrior("logitnormal", [self.a_mean_gt, self.a_std_gt, lbound, ubound])
+        )
+
+        # compile the model
+        model = hboms.HbomsModel(
+            name = "test_prior_samples_model_logitnormal",
+            state = [], odes = "", init = "",
+            params = params,
+            obs = self.obs, dists = self.dists,
+            trans_state = self.trans_state,
+            transform = self.transform,
+            options = {"prior_samples": True},
+            model_dir=self.model_dir,
+        )
+
+        # fit the model
+        model.sample(
+            data=self.data,
+            chains=1,
+            show_progress=False,
+            iter_warmup=1000,
+            iter_sampling=1000,
+            seed=4562,
+        )
+
+        # make sure prior samples were generated
+        assert "prior_sample_a" in model.fit.stan_variables(), "Prior samples for 'a' not found"
+
+        # check the results
+        
+        sample_a = model.fit.stan_variable("prior_sample_a")
+
+        # make sure that the samples are within bounds
+        assert np.all(sample_a >= lbound), "Some prior samples for 'a' are below lower bound"
+        assert np.all(sample_a <= ubound), "Some prior samples for 'a' are above upper bound"
+
+
 
 
 class TestRandomPriorSamples:
@@ -362,4 +410,91 @@ class TestCorrelatedPriorSamples:
 
         validate_random_distributions(self.loc_a_mean_gt, self.loc_a_std_gt, self.rate_a_gt, sample_a, "a")
         validate_random_distributions(self.loc_b_mean_gt, self.loc_b_std_gt, self.rate_b_gt, sample_b, "b")
+
+
+
+class TestPriorSamplerModel():
+    @pytest.fixture(autouse=True) 
+    def _setup(self):
+        self.model_dir = os.path.join("tests", "stan-cache")
+
+        self.mean_a_gt = 0.4
+        self.std_a_gt = 1.2
+
+        self.params = [
+            hboms.Parameter("a", 0.0, "fixed", lbound=None, 
+                            prior=hboms.StanPrior("normal", [self.mean_a_gt, self.std_a_gt])),
+            hboms.Parameter("sigma", 0.5, "const"),
+        ]
+        self.obs = [hboms.Observation("X")]
+        self.dists = [hboms.StanDist("normal", "X", ["x", "sigma"])]
+        self.state = [hboms.Variable("x")]
+        self.odes = "ddt_x = a;"
+        self.init = "x_0 = 0.0;"
+
+        # generate some data
+        # it does not matter what data we use here 
+        # since we are only testing prior sampling
+        np.random.seed(seed=3454)
+        ts = np.ones(1)
+        num_units = 5
+        self.x_gt = 3.0
+        self.sigma_gt = 0.5
+        X = [
+            sts.norm.rvs(loc=self.x_gt, scale=self.sigma_gt, size=ts.shape)
+            for r in range(num_units)
+        ]
+        self.data = {
+            "X": X,
+            "Time": [ts for r in range(num_units)],
+        }
+
+    def test_prior_sampler(self):
+        # compile the model
+        model = hboms.HbomsModel(
+            name = "test_prior_sampler_model",
+            state = self.state, odes = self.odes, init = self.init,
+            params = self.params,
+            obs = self.obs, dists = self.dists,
+            model_dir=self.model_dir,
+            compile_model=False, # we do not need the full model compiled.
+        )
+
+        # check that model contains a field for prior sampler code
+        assert hasattr(model, "_prior_sampler_code"), "Model does not have _prior_sampler_code attribute"
+        msg = "_prior_sampler_code attribute should be None before sample_from_prior is called"
+        assert model._prior_sampler_code is None, msg
+
+        # sample from the prior
+        model.sample_from_prior(
+            self.data,
+            chains=1,
+            show_progress=False,
+            iter_warmup=1000,
+            iter_sampling=2000,
+            seed=7890,
+        )
+
+        # check that model contains a field for prior fit
+        assert hasattr(model, "_prior_fit"), "Model does not have _prior_fit attribute"
+        assert model.prior_fit is not None, "Model _prior_fit attribute is None after sampling from prior"
+
+        # check that prior fit contains samples for prior_sample_a
+        assert "a" in model._prior_fit.stan_variables(), "Prior fit does not contain samples for 'a'"
+
+        # check that a has the correct distribution
+
+        sample_a = model.prior_fit.stan_variable("a")
+
+        err_msg = "Mean of prior samples for 'a' is not close to 0.4"
+        assert np.abs(np.mean(sample_a) - self.mean_a_gt) < 0.1, err_msg
+        err_msg = "Std of prior samples for 'a' is not close to 1.2"
+        assert np.abs(np.std(sample_a) - self.std_a_gt) < 0.1, err_msg
+
+        # check distance with KS test
+        gt_prior_dist = sts.norm(loc=self.mean_a_gt, scale=self.std_a_gt).cdf
+        ks_stat, ks_pvalue = sts.kstest(sample_a, gt_prior_dist)
+        err_msg = "KS test p-value is too low, prior samples do not match prior distribution"
+        assert ks_pvalue > 0.02, err_msg
+
 
