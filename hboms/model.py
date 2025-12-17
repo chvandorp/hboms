@@ -1254,6 +1254,8 @@ class HbomsModel:
         Sample from the prior distribution of the model. This is done
         by compiling a model that ignores the observations and only
         simulates from the prior.
+        To facilitate efficient sampling from the prior,
+        we force all random parameters to be non-centered.
 
         Parameters
         ----------
@@ -1269,6 +1271,14 @@ class HbomsModel:
             Additional arguments passed to cmdstanpy.
 
         """
+
+        # keep track of which parameters were originally non-centered
+        original_noncentered = {}
+        for p in self._params:
+            if p.get_type() == "random":
+                original_noncentered[p.name] = p.noncentered
+                p.noncentered = True
+        
         AST = genmodel.gen_stan_model(
             self._odes,
             self._init,
@@ -1307,6 +1317,11 @@ class HbomsModel:
             method="sample",
             **kwargs,
         )
+
+        # finally, reset the non-centered attributes of the parameters
+        for p in self._params:
+            if p.name in original_noncentered:
+                p.noncentered = original_noncentered[p.name]
 
 
     def _select_state_vars(self, state_var_names: list[str] | None = None):

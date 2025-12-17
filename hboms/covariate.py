@@ -120,6 +120,21 @@ class CatCovariate(Covariate):
     @property
     def cats(self) -> list[str]:
         return self._cats
+    
+    @property
+    def level_matrix_var(self) -> sl.Var:
+        """
+        This is used for when the covariate is used as for a random level.
+        The matrix is of size (R x R), where R is the number of units.
+        It defines which units are in the same category.
+        
+        Returns
+        -------
+        sl.Var
+            A Stan variable representing the level matrix.
+        """
+        R = sl.intVar("R")
+        return sl.Var(sl.Matrix(R, R), f"level_{self.name}")
 
     @property
     def num_cat_var(self) -> sl.Var:

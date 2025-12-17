@@ -84,7 +84,7 @@ def domain_transform(
             val = loc + to_vec(val)
         case (None, sl.Expr()):
             # apply a linear transformation to the value
-            val = to_vec(val) * scale
+            val = scale * to_vec(val)
         case (sl.Expr(), sl.Expr()):
             # apply a linear transformation to the value
             val = loc + scale * to_vec(val)
@@ -400,7 +400,21 @@ class FixedParameter(Parameter):
         return [sl.DeclAssign(sl.Var(self.var.var_type, f"prior_sample_{self._name}"), rng_expr)]
 
 
+
+
 class RandomParameter(Parameter):
+    def _check_nc_compatibility(self):
+        # non-centered parameters are still very limited
+        if self._noncentered:
+            if self.space != "real":
+                raise NotImplementedError(
+                    "non-centered parameterization is only implemented for scalars"
+                )
+            if self._contcovs:
+                raise NotImplementedError(
+                    "non-centered parameterization is not implemented for continuous covariates"
+                )
+
     def __init__(
         self,
         name: str,
@@ -500,21 +514,8 @@ class RandomParameter(Parameter):
         # centered or non-centered parameterization
         self._noncentered = noncentered
 
-        # non-centered parameters are still very limited
-        if self._noncentered:
-            if self.space != "real":
-                raise NotImplementedError(
-                    "non-centered parameterization is only implemented for scalars"
-                )
-            if self.level is not None and self.level_type == "random":
-                raise NotImplementedError(
-                    "non-centered parameterization is not implemented for random levels"
-                )
-            if self._contcovs:
-                raise NotImplementedError(
-                    "non-centered parameterization is not implemented for continuous covariates"
-                )
-
+        # make sure the non-centered setting is compatible with the parameter settings
+        self._check_nc_compatibility()
 
     @property
     def scale_value(self) -> float:
@@ -541,7 +542,7 @@ class RandomParameter(Parameter):
         return self._level_type
 
     @property
-    def level_scale(self) -> Optional[CatCovariate]:
+    def level_scale(self) -> Optional[sl.Var]:
         return self._level_scale
 
     @property
@@ -551,6 +552,13 @@ class RandomParameter(Parameter):
     @property
     def noncentered(self) -> bool:
         return self._noncentered
+    
+    @noncentered.setter
+    def noncentered(self, x: bool) -> None:
+        self._noncentered = x
+
+        # verify compatibility
+        self._check_nc_compatibility()
 
     @property
     def loc_prior_name(self) -> str:
@@ -559,6 +567,13 @@ class RandomParameter(Parameter):
     @property
     def scale_prior_name(self) -> str:
         return self._scale_prior.name
+
+    @property
+    def rand_var(self) -> sl.Var:
+        # remove bounds from the stan type
+        unres_stan_type = copy.deepcopy(self._stan_type)
+        unres_stan_type.lower, unres_stan_type.upper = None, None
+        return sl.Var(unres_stan_type, f"rand_{self.name}")
 
     def get_type(this) -> str:
         return "random"
@@ -593,15 +608,9 @@ class RandomParameter(Parameter):
         # expand the parameter to the right shape
         # choose between centered and non-centered parameterization
         if self._noncentered:
-            # create a new variable for the random effect
-            rand_effect_type = copy.deepcopy(self._stan_type)
-            # the random effect is unrestricted: set lbound and ubound to None
-            # without deepcopy this would modify self._stan_type as well!
-            rand_effect_type.lower, rand_effect_type.upper = None, None
-            rand_effect = sl.Var(rand_effect_type, f"rand_{self._name}")
-            array = sl.expandVar(rand_effect, (num_pars,))
+            array = sl.expandVar(self.rand_var, (num_pars,)) # "rand_parname"
         else:
-            array = sl.expandVar(self.var, (num_pars,))
+            array = sl.expandVar(self.var, (num_pars,)) # just "parname"
         decls = [sl.Decl(x) for x in [array, self._loc, self._scale] + self._cws]
         # declare an additional scale if the parameter has additional group-specific random effects
         if self.level is not None and self.level_type == "random":
@@ -609,17 +618,40 @@ class RandomParameter(Parameter):
         return decls
 
     def genstmt_trans_params(self) -> List[sl.Stmt]:
+        R, r = sl.intVar("R"), sl.intVar("r") # TODO: levels
         # if the parameter is non-centered, we have to transform it
         # otherwise we can just sample the parameter directly and don't need to transform
         if not self._noncentered:
             return []
+        # else, we need to do extra work: transform the random effects
+        if self.level is not None and self.level_type == "random":
+            # build the covariance matrix for the random level effects
+            cov_mat1 = sl.square(self.scale) * sl.Call("identity_matrix", sl.intVar("R"))
+            cov_mat2 = sl.square(self.level_scale) * self.level.level_matrix_var
+            # define the cholesky factor 
+            chol_fact = sl.Call("cholesky_decompose", cov_mat1 + cov_mat2)
+            loc = self._loc
+            if self._catcovs:
+                cov = self._catcovs[0]
+                loc_array = sl.expandVar(loc, (cov.num_cat_var,))
+                cov_var = sl.expandVar(cov.var, (R,))
+                loc_array_indexed = loc_array.idx(cov_var)
+                loc = sl.Call("to_vector", loc_array_indexed)
+            
+            # use domain transform
+            trans_par = domain_transform(
+                self.rand_var, self._lbound, self._ubound,
+                array=True, loc=loc, scale=chol_fact
+            )
+            # declare the transformed parameter
+            par_array = sl.expandVar(self.var, (R,))
+            par_decl = sl.DeclAssign(par_array, trans_par)
+            return [par_decl]
         # else...
-        R, r = sl.intVar("R"), sl.intVar("r") ## TODO: levels!
         one_par_per_unit = self.level is None or self._level_type == "random"
         num_pars = R if one_par_per_unit else self._level.num_cat_var
         array = sl.expandVar(self.var, (num_pars,))
-        rand_effect = sl.Var(self._stan_type, f"rand_{self._name}")
-        rand_effect_array = sl.expandVar(rand_effect, (num_pars,))
+        rand_effect_array = sl.expandVar(self.rand_var, (num_pars,))
         # allow for categorical covariates by selecting the correct loc value
         loc = self._loc 
         if self._catcovs:
