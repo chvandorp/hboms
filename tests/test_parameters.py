@@ -1,3 +1,4 @@
+from hboms.covariate import CatCovariate
 from hboms.parameter import RandomParameter, ContCovariate
 from hboms.deparse import deparse_stmt
 
@@ -57,3 +58,37 @@ class TestParameter:
 
         p = RandomParameter("theta", 1.0, lbound=0.0, ubound=1.0)
         assert p._distribution == "logitnormal"
+
+    def test_random_param_level(self):
+        cov = CatCovariate("x", categories=["A", "B", "C"])
+        p = RandomParameter("a", 1.0, level=cov, level_type="random", lbound=None)
+
+        # check that correct priors are generated
+        stmts = p.genstmt_model()
+
+        stmt_strs = [deparse_stmt(stmt) for stmt in stmts]
+        expected_strs = [
+            "to_vector(a) ~ multi_normal(rep_vector(loc_a, R), scale_a^2 * identity_matrix(R) + scale_a_x^2 * level_x);",
+            "loc_a ~ student_t(3.0, 0.0, 2.5);",
+            "scale_a ~ student_t(3.0, 0.0, 2.5);",
+            "scale_a_x ~ student_t(3.0, 0.0, 2.5);",
+        ]
+
+        assert stmt_strs == expected_strs, "Priors not generated as expected"
+
+    def test_random_param_level_nc(self):
+        cov = CatCovariate("x", categories=["A", "B", "C"])
+        p = RandomParameter("a", 1.0, level=cov, level_type="random", lbound=None, noncentered=True)
+
+        # check that correct priors are generated
+        stmts = p.genstmt_model()
+
+        stmt_strs = [deparse_stmt(stmt) for stmt in stmts]
+        expected_strs = [
+            "rand_a ~ std_normal();",
+            "loc_a ~ student_t(3.0, 0.0, 2.5);",
+            "scale_a ~ student_t(3.0, 0.0, 2.5);",
+            "scale_a_x ~ student_t(3.0, 0.0, 2.5);",
+        ]
+
+        assert stmt_strs == expected_strs, "Priors not generated as expected"

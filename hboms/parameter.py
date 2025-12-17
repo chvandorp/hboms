@@ -719,6 +719,9 @@ class RandomParameter(Parameter):
             priors.append(sl.Sample(rand_array, sl.Call("std_normal", [])))
             priors += self._loc_prior.gen_sampling_stmt(self._loc)
             priors += self._scale_prior.gen_sampling_stmt(self._scale)
+            # in case of level-specific random effects, add prior for level scale
+            if self.level is not None and self.level_type == "random":
+                priors += self._level_scale_prior.gen_sampling_stmt(self._level_scale)
             return priors
 
         # select the correct loc from the loc array in the case of categorical covariates
