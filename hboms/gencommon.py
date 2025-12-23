@@ -20,6 +20,8 @@ def gen_level_matrices(params: list[Parameter]) -> tuple[list[sl.Stmt], list[sl.
     ]
     level_matrix_decls = [sl.Decl(lev_mat) for lev_mat in level_matrices]
     level_matrix_defs = []
+    if len(level_matrices) == 0:
+        return level_matrix_decls, level_matrix_defs
     r1Var, r2Var = sl.intVar("r1"), sl.intVar("r2")
     for lev, lev_mat in zip(random_levels, level_matrices):
         level_matrix_defs.append(
@@ -34,6 +36,27 @@ def gen_level_matrices(params: list[Parameter]) -> tuple[list[sl.Stmt], list[sl.
     level_outer_loop = sl.ForLoop(r1Var, sl.Range(sl.one(), RVar), level_inner_loop)
 
     return level_matrix_decls, [level_outer_loop]
+
+
+def gen_covariate_restrictions(params: list[Parameter]) -> list[sl.Stmt]:
+    """
+    Find parameters with covariates and a fixed level
+    and generate statements to restrict covariate values based on the level.
+    Avoid adding duplicates...
+
+    TODO: this is only for categorical covariates right now.
+    but would also make sense for continuous covariates!!
+    """
+    stmts: list[sl.Stmt] = []
+    pairs_added = set()
+    for p in params:
+        if p._catcovs and p.level is not None and p.level_type == "fixed":
+            for cov in p._catcovs:
+                if (p.level.name, cov.name) not in pairs_added:
+                    pairs_added.add((p.level.name, cov.name))
+                    stmts += cov.genstmt_transformed_data(p.level)
+    return stmts
+
 
 
 def treat_as_random(p):

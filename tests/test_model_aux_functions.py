@@ -3,7 +3,7 @@ test auxiliary functions for the model class. Such as preparing data sets,
 preparing initial values etc.
 """
 
-
+import pytest
 import hboms
 from hboms.model import prepare_data, prepare_init, prepare_simulation_times
 import numpy as np
@@ -174,7 +174,58 @@ class TestSimTime():
 
 
 
-        
+class TestCatsAndLevels:
+    def test_resrict_categorical_covariates(self):
+        from hboms.model import restrict_cat_covar_to_level
 
+        # example that works
+
+        data = {
+            "Group" : ["A", "B", "C", "A", "B", "C"],
+            "Treatment" : ["Mock", "Drug", "Drug", "Mock", "Drug", "Drug"]
+        }
+
+        cats = restrict_cat_covar_to_level(data, cov="Treatment", level="Group")
+
+        expected = ["Mock", "Drug", "Drug"]
+
+        assert cats == expected, "categorical covariate restriction did not work as expected"
+
+        # example that fails
+
+        data = {
+            "Group" : ["A", "B", "C", "A", "B", "C"],
+            "Treatment" : ["Mock", "Drug", "Drug", "Drug", "Drug", "Drug"]
+        }
+
+        # this should raise a ValueError since Group "A" has members with different Treatment cats
+
+        with pytest.raises(ValueError):
+            cats = restrict_cat_covar_to_level(data, cov="Treatment", level="Group")
+
+
+    def test_find_restrictions(self):
+        from hboms.model import find_cat_requiring_level_restriction
+        from hboms.covariate import CatCovariate
+        from hboms.parameter import RandomParameter
+            
+        cov1 = CatCovariate("Group", categories=["A", "B", "C"])
+        cov2 = CatCovariate("Treatment", categories=["Mock", "Drug"])
+        cov3 = CatCovariate("Gender", categories=["M", "F"])
+
+        params = [
+            RandomParameter("theta1", 1.0, lbound=0.0, covariates=[cov1], level=cov3),
+            RandomParameter("theta2", 2.0, lbound=0.0),
+            RandomParameter("theta3", 3.0, lbound=0.0, covariates=[cov2], level=cov1)
+        ]
+
+        restrictions = find_cat_requiring_level_restriction(params)
+
+        expected = [
+            ("Group", "Gender"),
+            ("Treatment", "Group"),
+        ]
+
+        assert restrictions == expected, "found restrictions are not as expected"
 
 

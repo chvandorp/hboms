@@ -3,6 +3,7 @@ Test a number of simple models. Do they compile? Do they run?
 Do we get reasonable output?
 """
 
+import pytest
 import hboms
 import numpy as np
 import scipy.stats as sts
@@ -276,4 +277,195 @@ class TestModel:
         assert lb > 0, f"estimated correlation is not significantly positive: {lb:0.3f} < 0.0"
 
 
+
+
+
+
+
+
+class TestCatCovsWithFixedLevels:
+    """
+    Test that parameters with categorical covariates and fixed levels
+    are handled correctly.
+    """
+
+    model_dir = os.path.join("tests", "stan-cache")
+    odes="ddt_x = a*x*(1-x);"
+    init="x_0 = 0.001;"
+    state=[hboms.Variable("x")]
+    obs=[hboms.Observation("X")]
+    dists=[hboms.StanDist(obs_name="X", name="normal", params=["x", "sigma"])]
+
+    covariates = [
+        hboms.Covariate("A", cov_type="cat", categories=["A1", "A2", "A3"]),
+        hboms.Covariate("B", cov_type="cat", categories=["B1", "B2", "B3", "B4", "B5", "B6"]),
+    ]
+
+    R = 10
+    data = {
+        "Time" : [np.linspace(1, 20, 20) for _ in range(R)],
+        "A" : ["A1", "A1", "A1", "A2", "A2", "A3", "A3", "A3", "A3", "A3"],
+        "B" : ["B1", "B1", "B2", "B3", "B3", "B4", "B5", "B6", "B6", "B6"],
+    }
+
+
+    def test_catcov_fixed_level(self):
+        params = [
+            hboms.Parameter("a", 0.5, "random", scale=0.2, covariates=["A"], level="B", level_type="fixed"),
+            hboms.Parameter("b", 1.0, "random", covariates=["B"], noncentered=True),
+            hboms.Parameter("sigma", 0.1, "fixed"),
+        ]
+
+        model = hboms.HbomsModel(
+            name="cat_fixed_lev_test",
+            params=params,
+            odes=self.odes,
+            init=self.init,
+            state=self.state,
+            obs=self.obs,
+            dists=self.dists,
+            covariates=self.covariates,
+            model_dir=self.model_dir,
+        )
+
+        import numpy as np
+        np.random.seed(12345)
+
+        sims_pars = model.simulate(data=self.data, num_simulations=10)
+
+        # fit the model
+        sim_data, sim_par = sims_pars[0]
+        model.sample(
+            data = sim_data, step_size=0.01, chains=1, 
+            iter_warmup=500, iter_sampling=500, 
+            show_progress=False, seed=5678
+        )
+
+        # check that the parameters have the right shape
+
+        a = model.fit.stan_variable("a")
+        L = len(self.covariates[1].categories)  # covariate B defines the level for a
+        assert a.shape == (500, L), f"expected {L} levels for parameter 'a' based on level 'B'"
+
+        # check that loc of a has the right shape 
+
+        loc_a = model.fit.stan_variable("loc_a")
+        K = len(self.covariates[0].categories)  # covariate A defines the categories for a
+        assert loc_a.shape == (500, K), f"expected loc of 'a' to have {K} components for 'A'"
+
+
+        # check that b has the right shape too
+
+        b = model.fit.stan_variable("b")
+        assert b.shape == (500, self.R), f"expected {self.R} individuals for parameter 'b' based on R={self.R}"
+
+
+        # check that a is within reasonable bounds
+        a_gt = sim_par["a"]
+        a_hat = np.median(a, axis=0)
+        slope = sts.linregress(a_gt, a_hat).slope
+        assert slope > 0.5, "estimated 'a' values do not correspond to ground truth"
+
+
+    def test_catcov_fixed_level_nc(self):
+        params = [
+            hboms.Parameter("a", 0.5, "random", scale=0.2, covariates=["A"], 
+                            level="B", level_type="fixed", noncentered=True),
+            hboms.Parameter("b", 1.0, "random", covariates=["B"], noncentered=True),
+            hboms.Parameter("sigma", 0.1, "fixed"),
+        ]
+
+        model = hboms.HbomsModel(
+            name="cat_fixed_lev_test_nc",
+            params=params,
+            odes=self.odes,
+            init=self.init,
+            state=self.state,
+            obs=self.obs,
+            dists=self.dists,
+            covariates=self.covariates,
+            model_dir=self.model_dir,
+        )
+
+        import numpy as np
+        np.random.seed(12345)
+
+        sims_pars = model.simulate(data=self.data, num_simulations=10)
+
+        # fit the model
+        sim_data, sim_par = sims_pars[0]
+        model.sample(
+            data = sim_data, step_size=0.01, chains=1, 
+            iter_warmup=500, iter_sampling=500, 
+            show_progress=False, seed=5678
+        )
+
+        # check that the parameters have the right shape
+        a = model.fit.stan_variable("a")
+        L = len(self.covariates[1].categories)  # covariate B defines the level for a
+        assert a.shape == (500, L), f"expected {L} levels for parameter 'a' based on level 'B'"
+
+        # check that loc of a has the right shape 
+        loc_a = model.fit.stan_variable("loc_a")
+        K = len(self.covariates[0].categories)  # covariate A defines the categories for a
+        assert loc_a.shape == (500, K), f"expected loc of 'a' to have {K} components for 'A'"
+
+        # check that we estimated "random effects" for a 
+
+        assert "rand_a" in model.fit.stan_variables(), "expected random effects for parameter 'a'"
+
+        # check that rand_a has the right shape
+        rand_a = model.fit.stan_variable("rand_a")
+        L = len(self.covariates[1].categories)  # covariate B defines the level for a
+        assert rand_a.shape == (500, L), f"expected {L} levels for random effects of 'a' based on level 'B'"
+        
+    def test_catcov_fixed_level_error(self):
+        """
+        try to sample from a model with a categorical covariate
+        and a fixed level that are not compatible.
+        This should raise an error.
+        """
+        params = [
+            hboms.Parameter("a", 0.5, "random", scale=0.2, covariates=["A"], level="B", level_type="fixed"),
+            hboms.Parameter("sigma", 0.1, "fixed"),
+        ]
+
+        model = hboms.HbomsModel(
+            name="cat_fixed_lev_test_error",
+            params=params,
+            odes=self.odes,
+            init=self.init,
+            state=self.state,
+            obs=self.obs,
+            dists=self.dists,
+            covariates=self.covariates,
+            model_dir=self.model_dir,
+        )
+
+        import numpy as np
+        np.random.seed(12345)
+
+        R = 10
+        err_data = {
+            "Time" : [np.linspace(1, 20, 20) for _ in range(R)],
+            "A" : ["A1", "A1", "A1", "A2", "A2", "A3", "A3", "A3", "A3", "A3"],
+            "B" : ["B1", "B1", "B2", "B1", "B3", "B2", "B4", "B5", "B6", "B6"],
+        }
+        with pytest.raises(ValueError):
+            sims_pars = model.simulate(data=err_data, num_simulations=10)
+
+
+        # simulate data using correct level definition
+        sims_pars = model.simulate(data=self.data, num_simulations=10)
+
+        # fit the model with incorrect level definition
+
+        sim_data, sim_par = sims_pars[0]
+        with pytest.raises(ValueError):
+            sim_data["B"] = err_data["B"]  # incompatible level definition
+            model.sample(
+                data = sim_data, step_size=0.01, chains=1, 
+                iter_warmup=500, iter_sampling=500, 
+                show_progress=False, seed=5678
+            )
 

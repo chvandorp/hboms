@@ -82,9 +82,120 @@ def compile_stan_model(
     return sm
 
 
+def find_cat_requiring_level_restriction(
+    params: list[Parameter],
+) -> list[tuple[str, str]]:
+    """
+    Find categorical covariates that require level restriction,
+    i.e. that are used with parameters that have a fixed level.
+
+    Parameters
+    ----------
+    params : list[Parameter]
+        List of model parameters.
+
+    Returns
+    -------
+    list[tuple[str, str]]
+        List of categorical covariates that require level restriction.
+    """
+    cat_covs_levels = []
+
+    def has_fixed_level(p: Parameter) -> bool:
+        if p.get_type() == "random" and p.level is not None and p.level_type == "fixed":
+            return True
+        return False
+    
+    for p in params:
+        if has_fixed_level(p) and len(p._catcovs) > 0:
+            cat = p._catcovs[0].name
+            lev = p.level.name
+            cat_covs_levels.append((cat, lev))
+
+    return util.unique(cat_covs_levels)
+
+
+
+def restrict_cat_covar_to_level(data: dict, cov: str, level: str) -> list:
+    """
+    Auxiliary function to restrict categorical covariates
+    to a given "level".
+    This is used for parameters fith a fixed level and a categorical covariate.
+    Raises an exception if the categorical covariate has multiple categories
+    for the same value of the level variable.
+
+    Parameters
+    ----------
+    data : dict
+        Data dictionary.
+    cov : str
+        Name of the categorical covariate.
+    level : str
+        Name of the level variable.
+
+    Example
+    -------
+    Suppose we have a categorical covariate "treatment" with categories
+    "placebo" and "drug", and a level variable "group" with values
+    "A", "B", and "C". Then this function checks that all units in group "A"
+    have the same treatment category, and similarly for group "B" and "C".
+    It then returns a list with the treatment category for each group.
+    
+    Returns
+    -------
+    list
+        List of categories for each value of the level
+    """
+    cov_vals = data[cov]
+    level_vals = data[level]
+
+    unique_level_vals = util.unique(level_vals)
+    restricted_cats = []
+    for lv in unique_level_vals:
+        units = [i for i, x in enumerate(level_vals) if x == lv]
+        cats = util.unique([cov_vals[i] for i in units])
+        if len(cats) > 1:
+            raise ValueError(
+                f"categorical covariate '{cov}' has multiple categories "
+                f"for level value '{lv}' of level '{level}':"
+                f" {cats[0]}, {cats[1]} (and possibly more)"
+            )
+        restricted_cats.append(cats[0])
+    return restricted_cats
+
+
+def check_level_restrictions(data: dict, params: list[Parameter]) -> None:
+    """
+    Check if any categorical covariates require level restrictions,
+    and apply these restrictions to the data dictionary.
+
+    Parameters
+    ----------
+    data : dict
+        Data dictionary.
+    params : list[Parameter]
+        List of model parameters.
+
+    Raises
+    ------
+    ValueError
+        If a categorical covariate has multiple categories for the same
+        value of the level variable.
+    """
+    cat_covs_levels = find_cat_requiring_level_restriction(params)
+    for cov, level in cat_covs_levels:
+        try:
+            restrict_cat_covar_to_level(data, cov, level)
+        except ValueError as e:
+            raise ValueError(f"Level restriction failed for covariate '{cov}' and level '{level}': {e}")
+
+
 def map_cat_covars(data: dict, catcovs: list[CatCovariate]) -> tuple[dict, dict]:
     """
     auxiliary function used by prepare_data and prepare_data_simulator
+
+    TODO: make sure that the order of categories is the same as 
+    defined in the CatCovariate class (i.e. by the user)
     """
     # process and add categorical covariates
     cat_covariates = {cn.name: data[cn.name] for cn in catcovs}
@@ -141,6 +252,9 @@ def prepare_data(
     Auxiliary function to create the right data dictionary accepted by cmdstanpy.
     Uses user supplied data, but also constant parameters and other required data.
     """
+    # check that level restrictions are well-defined (raise error otherwise)
+    check_level_restrictions(data, params)
+
     Time = data["Time"]
     R = len(Time)
     N = [len(x) for x in Time]
@@ -297,6 +411,9 @@ def prepare_data_simulator(
     added to the data dictionary. This also holds for locations
     and scales for random parameters.
     """
+    # check that level restrictions are well-defined (raise error otherwise)
+    check_level_restrictions(data, params)
+
     Time = data["Time"]
     R = len(Time)
     N = [len(x) for x in Time]

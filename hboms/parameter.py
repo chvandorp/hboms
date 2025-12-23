@@ -504,13 +504,6 @@ class RandomParameter(Parameter):
         # TODO: we could choose the make the default equal to the scale_prior.
         self._level_scale_prior = def_hyp_prior if level_scale_prior is None else level_scale_prior
 
-        # at this point parameters with a fixed level can't have a categorical covariate
-        # because we would have to "reduce" the covariate to the level (instead of the unit)
-        if level is not None and level_type == "fixed" and self._catcovs:
-            raise NotImplementedError(
-                "parameters with a fixed level can't have a categorical covariate"
-            )
-
         # centered or non-centered parameterization
         self._noncentered = noncentered
 
@@ -655,7 +648,17 @@ class RandomParameter(Parameter):
         # allow for categorical covariates by selecting the correct loc value
         loc = self._loc 
         if self._catcovs:
-            cat = self._catcovs[0].var.idx(r) # the category for unit r
+            catcov = self._catcovs[0]
+            if self.level is not None and self.level_type == "fixed":
+                # in this case, the loc array is defined on the level
+                # so we have to index it with the restricted categories
+                restricted_catcov_var = catcov.restricted_var(self.level)
+                catcov_var_array = sl.expandVar(restricted_catcov_var, (num_pars,))
+                cat = catcov_var_array.idx(r) # the category for level r
+            else:
+                # otherwise, index with the unit-level categories
+                catcov_var_array = sl.expandVar(catcov.var, (num_pars,))
+                cat = catcov_var_array.idx(r) # the category for unit r
             loc = loc.idx(cat) # the loc for that category
         scale = self._scale
         # linear transformation of the random effect
@@ -728,9 +731,17 @@ class RandomParameter(Parameter):
         if len(self._contcovs) == 0:
             if len(self._catcovs) == 0:
                 loc = self._loc
-            elif len(self._catcovs) > 0:
-                catcov_var = sl.expandVar(self._catcovs[0].var, (R,))
-                loc = self._loc.idx(catcov_var)
+            else:
+                catcov = self._catcovs[0]
+                if self.level is not None and self.level_type == "fixed":
+                    # in this case, the loc array is defined on the level
+                    # so we have to index it with the restricted categories
+                    restricted_catcov_var = catcov.restricted_var(self.level)
+                    num_pars = self.level.num_cat_var
+                    catcov_var_array = sl.expandVar(restricted_catcov_var, (num_pars,))
+                else:
+                    catcov_var_array = sl.expandVar(catcov.var, (R,))
+                loc = self._loc.idx(catcov_var_array)
 
             # take care of the parameter space.
             # TODO: simplify and apply to other cases below!
@@ -909,7 +920,16 @@ class RandomParameter(Parameter):
             case 0:
                 loc_terms.append(self._loc)
             case 1:
-                cov = transform_func(self._catcovs[0].var)
+                if self.level is not None and self.level_type == "fixed":
+                    # in this case, the loc array is defined on the level
+                    # so we have to index it with the restricted categories
+                    restricted_catcov_var = self._catcovs[0].restricted_var(self.level)
+                    num_pars = self.level.num_cat_var
+                    catcov_var_array = sl.expandVar(restricted_catcov_var, (num_pars,))
+                else:
+                    catcov_var_array = sl.expandVar(self._catcovs[0].var, (R,))
+                # apply additional transform function
+                cov = transform_func(catcov_var_array)
                 loc_terms.append(self._loc.idx(cov))
             case _:
                 raise NotImplementedError(

@@ -509,6 +509,29 @@ def gen_trans_data_block(
     options: dict,
     ivp_parnames: list[str],
 ) -> list[sl.Stmt]:
+    """
+    Generate transformed data block statements, including preparing
+    rdats and idats for passing constants and shapes to map_rect.
+
+    TODO: remove separation of declarations and definitions.
+
+    Parameters
+    ----------
+    params : list[Parameter]
+        List of all parameters in the model.
+    plugin_code : sl.MixinStmt | None
+        Optional user-provided plugin code to include in the transformed data block.
+    options : dict
+        Dictionary of model options.
+    ivp_parnames : list[str]
+        List of parameter names involved in the IVP.
+
+    Returns
+    -------
+    list[sl.Stmt]
+        List of statements for the transformed data block.
+    """
+
     consts = [
         p
         for p in params
@@ -574,6 +597,12 @@ def gen_trans_data_block(
     if len(level_matrix_decls) > 0:
         defs.append(sl.comment("construct level matrices"))
         defs += level_matrix_asgns
+
+    # check if there are categorical covariates that require restriction
+    covariate_restrictions = gencommon.gen_covariate_restrictions(params)
+    if len(covariate_restrictions) > 0:
+        defs.append(sl.comment("restrict categorical covariate values based on level"))
+        defs += covariate_restrictions
 
     rdats_assigns: list[sl.Stmt] = []
     for i, p in enumerate(consts):

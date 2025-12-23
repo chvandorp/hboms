@@ -151,15 +151,21 @@ def gen_data_block(params, corr_params, covs, options) -> list[sl.Stmt]:
     return data_block
 
 
-def gen_trans_data_block(params: list[Parameter]) -> Optional[list[sl.Stmt]]:
+def gen_trans_data_block(params: list[Parameter]) -> list[sl.Stmt] | None:
+    stmts: list[sl.Stmt] = []
     # if there are random parameters with a random level, we need to define boolean matrices
     level_matrix_decls, level_matrix_asgns = gencommon.gen_level_matrices(params)
+    level_matrix_stmts = level_matrix_decls + level_matrix_asgns
+    if len(level_matrix_decls) > 0:
+        stmts.append(sl.comment("declare and construct level matrices"))
+        stmts += level_matrix_stmts
 
-    if len(level_matrix_decls) == 0:
-        return None
-
-    stmts = [sl.comment("declare and construct level matrices")]
-    return stmts + level_matrix_decls + level_matrix_asgns
+    # check if there are categorical covariates that require restriction
+    covariate_restrictions = gencommon.gen_covariate_restrictions(params)
+    if len(covariate_restrictions) > 0:
+        stmts.append(sl.comment("restrict categorical covariate values based on level"))
+        stmts += covariate_restrictions
+    return stmts if len(stmts) > 0 else None
 
 
 def gen_gq_block(

@@ -144,6 +144,9 @@ class CatCovariate(Covariate):
         return np.full(self._num_cats, value)
 
     def genstmt_data(self) -> list[sl.Decl]:
+        """
+        Declaration of the Categorical Covariate in the data block.
+        """
         RVar = sl.intVar("R")
         decls: list[sl.Decl] = []
 
@@ -153,7 +156,47 @@ class CatCovariate(Covariate):
         decls.append(sl.Decl(sl.expandVar(self.var, (RVar,))))
 
         return decls
+    
+    def restricted_var(self, level) -> sl.Var:
+        """
+        Returns the variable representing the level-restricted version
+        of the covariate.
+        """
+        return sl.Var(self.stan_type, f"{self.name}_restrict_{level.name}")
 
+    def genstmt_transformed_data(self, level) -> list[sl.Stmt]:
+        """
+        Definition of possible level-restricted copies of the covariate
+        in the transformed data block.
+        """
+        RVar, rVar = sl.intVar("R"), sl.intVar("r")
+        stmts: list[sl.Stmt] = []
+        
+        restricted_var = self.restricted_var(level)
+        restricted_var_array = sl.expandVar(restricted_var, (level.num_cat_var,))
+        decl_resticted_covar = sl.Decl(restricted_var_array, 
+            comment=f"{level.name}-restricted version of covariate {self.name}"
+        )
+        stmts.append(decl_resticted_covar)
+
+        level_array = sl.expandVar(level.var, (RVar,))
+        covar_array = sl.expandVar(self.var, (RVar,))
+
+        # Define the restricted covariate with a for loop
+        # Cov_restricted_Level[Level[r]] = Cov[r] for r in 1:R
+        loop_body = sl.Assign(
+            restricted_var_array.idx(level_array.idx(rVar)),
+            covar_array.idx(rVar),
+        )
+        loop = sl.ForLoop(
+            rVar, sl.Range(sl.one(), RVar),
+            loop_body
+        )
+        stmts.append(loop)
+
+        return stmts
+            
+        
 
 def group_covars(
     covs: list[Covariate],
