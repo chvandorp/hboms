@@ -49,7 +49,8 @@ def gen_covariate_restrictions(params: list[Parameter]) -> list[sl.Stmt]:
     """
     stmts: list[sl.Stmt] = []
     pairs_added = set()
-    for p in params:
+    random_params = [p for p in params if p.get_type() == "random"]
+    for p in random_params:
         if p._catcovs and p.level is not None and p.level_type == "fixed":
             for cov in p._catcovs:
                 if (p.level.name, cov.name) not in pairs_added:

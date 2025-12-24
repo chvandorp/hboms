@@ -1331,7 +1331,7 @@ class ParameterBlock(Parameter):
     def genstmt_model(self) -> list[sl.Stmt]:
         ## TODO: how to incorporate categorical covariates here???
         n = sl.LiteralInt(len(self._params))
-        R = sl.Var(sl.Int(), "R")
+        R = sl.Var(sl.Int(), "R") # FIXME: number of params should depend on level!
         r = sl.Var(sl.Int(), "r")
         blockVar = sl.Var(sl.Array(sl.Vector(n), (R,)), f"block_{self._name}")
         locVar: sl.Expr = sl.Var(sl.Vector(n), f"loc_{self._name}")
@@ -1364,7 +1364,7 @@ class ParameterBlock(Parameter):
             priors = [
                 sl.ForLoop(
                     r,
-                    sl.Range(sl.one(), R),
+                    sl.Range(sl.one(), R), ## FIXME: number of params should depend on level!
                     sl.Sample(
                         blockVar.idx(r),
                         sl.Call("multi_normal_cholesky", [loc_expr, L]),
