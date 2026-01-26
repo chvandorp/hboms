@@ -11,7 +11,7 @@ class Covariate(ABC):
     def __eq__(self, other) -> bool:
         return self._name == other._name
 
-    def __le__(self, other) -> bool:
+    def __lt__(self, other) -> bool:
         return self._name < other._name
 
     def __hash__(self) -> int:

@@ -1,3 +1,4 @@
+import functools
 from typing import List, Optional, Sequence, Callable, Literal
 from abc import ABC, abstractmethod
 import numpy as np
@@ -1216,6 +1217,60 @@ def corr_sets_too_small(corr_sets: list[list[str]]) -> list[list[str]]:
     return res
 
 
+def index_loc_for_block(
+        p: RandomParameter, 
+        num_pars: sl.Expr,
+        fixed_level: CatCovariate | None = None, 
+        index: sl.Expr | None = None
+    ) -> sl.Expr:
+    """
+    Helper function to index the loc parameter of a random parameter block.
+    This is needed because the loc parameter can depend on categorical covariates.
+
+    Without cat covariates, loc is just p.loc.
+    Otherwise, we have to index loc with the categorical covariate.
+    This can depend on the level of the block.
+
+    Parameters
+    ----------
+    p : RandomParameter
+        the random parameter from which we take the loc parameter.
+    num_pars : sl.Expr
+        the number of parameters (i.e. R or number of level categories) 
+        used for expansion
+    fixed_level : CatCovariate | None, optional
+        the fixed level of the block, by default None
+    index : sl.Expr | None, optional
+        the index to apply to the loc parameter, by default None
+
+    Returns
+    -------
+    sl.Expr
+        the indexed loc parameter. This is a scalar expression if index is provided,
+        otherwise a vector expression.
+    """
+    if p._catcovs:
+        catcov = p._catcovs[0]
+        if fixed_level is not None:
+            # in this case, the loc array is defined on the level
+            # so we have to index it with the restricted categories
+            restricted_catcov_var = catcov.restricted_var(fixed_level)
+            catcov_var_array = sl.expandVar(restricted_catcov_var, (num_pars,))
+        else:
+            catcov_var_array = sl.expandVar(catcov.var, (num_pars,))
+        loc_array = sl.expandVar(p.loc, (catcov.num_cat_var,))
+        if index is not None:
+            loc_val = loc_array.idx(catcov_var_array.idx(index))
+            return loc_val
+        else:
+            loc_array = loc_array.idx(catcov_var_array)
+            loc_vec = sl.Call("to_vector", loc_array)
+            return loc_vec
+    else:
+        return p.loc
+
+
+
 class ParameterBlock(Parameter):
     """
     Note that the value attribute of ParameterBlock consists of
@@ -1238,6 +1293,11 @@ class ParameterBlock(Parameter):
             raise ValueError(
                 "All parameters in a ParameterBlock must have the same level"
             )
+        
+        if not all(p.level_type == "fixed" for p in params):
+            raise NotImplementedError(
+                "ParameterBlock can currently only be created from parameters with fixed levels"
+            )
 
         self._params = params
         self._name = "_".join([p.name for p in params])
@@ -1253,10 +1313,6 @@ class ParameterBlock(Parameter):
         self._contcovs = util.unique([cn for p in params for cn in p._contcovs])
 
         self._catcovs = util.unique([cn for p in params for cn in p._catcovs])
-        if len(self._catcovs) > 0:
-            raise NotImplementedError(
-                "correlated parameters can currently not have categorical covariates."
-            )
 
         self._scale_value = np.array([p.scale_value for p in params])
 
@@ -1320,6 +1376,11 @@ class ParameterBlock(Parameter):
     def level(self) -> Optional[CatCovariate]:
         return self._level
 
+    @property
+    def level_type(self) -> LevelType:
+        # currently the level_type has to be fixed for parameter blocks
+        return "fixed"
+
     def get_type(self) -> str:
         return "block"
 
@@ -1329,12 +1390,16 @@ class ParameterBlock(Parameter):
         )
 
     def genstmt_model(self) -> list[sl.Stmt]:
-        ## TODO: how to incorporate categorical covariates here???
         n = sl.LiteralInt(len(self._params))
-        R = sl.Var(sl.Int(), "R") # FIXME: number of params should depend on level!
-        r = sl.Var(sl.Int(), "r")
-        blockVar = sl.Var(sl.Array(sl.Vector(n), (R,)), f"block_{self._name}")
+        R, r = sl.Var(sl.Int(), "R"), sl.Var(sl.Int(), "r")
+        one_par_per_unit = self.level is None # note that random level is not supported here
+        num_pars = R if one_par_per_unit else self.level.num_cat_var
+
+        blockVar = sl.Var(sl.Array(sl.Vector(n), (num_pars,)), f"block_{self._name}")
         locVar: sl.Expr = sl.Var(sl.Vector(n), f"loc_{self._name}")
+        if self._catcovs:
+            # not critical, but the type of locVar is array if we have categorical covariates
+            locVar = sl.expandVar(locVar, (num_pars,))
         scaleVar = sl.Var(sl.Vector(n, lower=sl.rzero()), f"scale_{self.name}")
         L = sl.Call("diag_pre_multiply", [scaleVar, self._chol])
         covVars = {cov.name: sl.expandVar(cov.var, (R,)) for cov in self._contcovs}
@@ -1350,13 +1415,19 @@ class ParameterBlock(Parameter):
 
         priors: list[sl.Stmt] = []
 
-        if len(self._contcovs) == 0:
+        if not self._contcovs:
+            # no continuous covariates: we can sample all at once
             priors = [
                 sl.Sample(blockVar, sl.Call("multi_normal_cholesky", [locVar, L]))
             ]
         else:
+            if self._catcovs:
+                # if we have categorical covariates, we have to index locVar
+                locVar = locVar.idx(r)
+                # otherwise, locVar is just a vector
+
             loc_terms = [locVar] + [
-                weightVars[cov.name] * sl.IndexOp(covVars[cov.name], r)
+                weightVars[cov.name] * covVars[cov.name].idx(r)
                 for cov in self._contcovs
             ]
             loc_expr = reduce(lambda a, b: a + b, loc_terms)
@@ -1364,7 +1435,7 @@ class ParameterBlock(Parameter):
             priors = [
                 sl.ForLoop(
                     r,
-                    sl.Range(sl.one(), R), ## FIXME: number of params should depend on level!
+                    sl.Range(sl.one(), num_pars),
                     sl.Sample(
                         blockVar.idx(r),
                         sl.Call("multi_normal_cholesky", [loc_expr, L]),
@@ -1404,7 +1475,7 @@ class ParameterBlock(Parameter):
 
     def genstmt_trans_params(self) -> list[sl.Stmt]:
         n = sl.LiteralInt(len(self._params))
-        R = sl.Var(sl.Int(), "R")
+        R, r = sl.Var(sl.Int(), "R"), sl.Var(sl.Int(), "r")
         one_par_per_unit = self.level is None
         num_pars = R if one_par_per_unit else self.level.num_cat_var
 
@@ -1421,10 +1492,14 @@ class ParameterBlock(Parameter):
         # we apply an additional linear transformation to the values.
         # the transformation is defined by the loc and scale parameters.
 
+        index_loc = functools.partial(
+            index_loc_for_block, num_pars=num_pars, fixed_level=self.level
+        )
+
         trans_vals = [
             domain_transform(
                 val, p.lbound, p.ubound, array=True, 
-                loc=p.loc if p.noncentered else None,
+                loc=index_loc(p) if p.noncentered else None,
                 scale=p.scale if p.noncentered else None
             )
             for val, p in zip(vals, self._params)
@@ -1437,14 +1512,53 @@ class ParameterBlock(Parameter):
         # define loc and scale parameters
 
         loc = sl.Var(sl.Vector(n), f"loc_{self._name}")
+        if self._catcovs:
+            # if we have categorical covariates, loc is an array of vectors
+            loc = sl.expandVar(loc, (num_pars,))
+
         scale = sl.Var(sl.Vector(n, lower=sl.rzero()), f"scale_{self._name}")
 
         # the loc and scale vectors use the loc and scales from the parameters.
         # if the parameter is non-centered, the loc is zero (and we apply a linear transform later)
         # for the scales, we use 1.0 for non-centered parameters.
-        loc_decl = sl.DeclAssign(
-            loc, sl.LiteralVector([p.loc if not p.noncentered else sl.rzero() for p in self._params])
-        )
+        if not self._catcovs:
+            loc_decl = sl.DeclAssign(
+                loc, sl.LiteralVector([p.loc if not p.noncentered else sl.rzero() for p in self._params])
+            )
+            # in this case we can directly assign the loc vector, below we would have to use a for-loop
+            loc_decl_list = [loc_decl]
+        else:
+            # loc is an array, create this with a for-loop 
+            loc_elts = []
+            for p in self._params:
+                if p.noncentered:
+                    loc_elts.append(sl.rzero())
+                elif p._catcovs:
+                    catcov = p._catcovs[0]
+                    if self.level is not None and self.level_type == "fixed":
+                        # in this case, the loc array is defined on the level
+                        # so we have to index it with the restricted categories
+                        restricted_catcov_var = catcov.restricted_var(self.level)
+                        catcov_var_array = sl.expandVar(restricted_catcov_var, (num_pars,))
+                    else:
+                        catcov_var_array = sl.expandVar(catcov.var, (num_pars,))
+
+                    # select the correct loc value based on the categorical covariate
+                    loc_elt = p.loc.idx(catcov_var_array.idx(r))
+                    loc_elts.append(loc_elt)
+                else:
+                    # otherwise, just use the single loc value
+                    loc_elts.append(p.loc)
+            loc_decl = sl.Decl(loc)
+            loc_assign = sl.ForLoop(
+                r, sl.Range(sl.one(), num_pars),
+                sl.Assign(
+                    loc.idx(r),
+                    sl.LiteralVector(loc_elts)
+                )
+            )
+            # first declare loc, then assign values in for-loop
+            loc_decl_list = [loc_decl, loc_assign]
         real_one = sl.LiteralReal(1.0)
         scale_decl = sl.DeclAssign(
             scale, sl.LiteralVector([p.scale if not p.noncentered else real_one for p in self._params])
@@ -1452,17 +1566,16 @@ class ParameterBlock(Parameter):
 
         trans_decls += [
             sl.comment(f"loc and scale vectors for correlated parameter block {self._name}"),
-            loc_decl, scale_decl
-        ]
+        ] + loc_decl_list + [scale_decl]
 
         # define weight vectors if there are any covariates
         # group parameters according to covariates, insert zero weights for other parameters
-        def zero_weight(c: ContCovariate):
-            if c.dim is None:
+        def zero_weight(cov: ContCovariate):
+            if cov.dim is None:
                 return sl.rzero()
-            d = sl.LiteralInt(c.dim)
-            return sl.Call("zeros_vector", [d])
-
+            # else: return zero vector of correct dimension
+            return sl.Call("zeros_vector", [cov.dim_var])
+        
         cov_par_dict = {
             cov.name: [
                 cov.weight_var(p.name) if cov in p._contcovs else zero_weight(cov)
@@ -1471,18 +1584,20 @@ class ParameterBlock(Parameter):
             for cov in self._contcovs
         }
 
-        # weight vectors for scalar covariates
         weight_vecs = []
         for cov in self._contcovs:
             if cov.dim is None:
+                # weight vectors for scalar covariates
+                # warning: don't use expandVecVar here: this creates a row_vector
                 vec_decl = sl.DeclAssign(
-                    sl.expandVecVar(cov.weight_var(self._name), n),
+                    sl.Var(sl.Vector(n), cov.weight_name(self._name)),
                     sl.LiteralVector(cov_par_dict[cov.name]),
                 )
             else:
-                d = sl.LiteralInt(cov.dim)
+                # weight matrices for vector-valued covariates
+                d = cov.dim_var
                 vec_decl = sl.DeclAssign(
-                    sl.expandVecVar(cov.weight_var(self._name), n),
+                    sl.Var(sl.Matrix(d, n), cov.weight_name(self._name)),
                     sl.LiteralVector(
                         [sl.TransposeOp(x) for x in cov_par_dict[cov.name]]
                     ),
@@ -1519,7 +1634,18 @@ class ParameterBlock(Parameter):
         blockVar = sl.Var(sl.Vector(n), f"block_{self._name}")
         loc = sl.Var(sl.Vector(n), f"loc_{self._name}")
         scale = sl.Var(sl.Matrix(n, n), f"scale_{self._name}")
-        loc_terms_elts = [[p.loc] for p in self._params]
+
+        R, r = sl.Var(sl.Int(), "R"), sl.Var(sl.Int(), "r")
+        one_par_per_unit = self.level is None
+        num_pars = R if one_par_per_unit else self.level.num_cat_var
+
+        # use the right category from loc if there are categorical covariates
+        index_loc = functools.partial(
+            index_loc_for_block, num_pars=num_pars, 
+            fixed_level=self.level, index=r
+        )
+
+        loc_terms_elts = [[index_loc(p)] for p in self._params]
         for p, loc_terms in zip(self._params, loc_terms_elts):
             # add weighted covariates
             for cov, cw in zip(p._contcovs, p._cws):

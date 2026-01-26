@@ -475,6 +475,7 @@ def prepare_data_simulator(
                     locs = p._cw_values.get(
                         p._catcovs[0].name, p._catcovs[0].loc_value(loc_val)
                     )
+                    print(p.name, locs, p._cw_values, p._catcovs[0].name)
                     stan_data[f"loc_{p.name}"] = np.array(locs)
 
                 stan_data[f"scale_{p.name}"] = p.scale_value

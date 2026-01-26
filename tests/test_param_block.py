@@ -112,7 +112,7 @@ class TestParameterBlock:
         stmts = block.genstmt_trans_params()
         deparsed_stmts = [deparse_stmt(stmt) for stmt in stmts]
         stmt_str = "\n".join(deparsed_stmts)
-        expected_decl = "matrix[K_B, 2] weight_B_theta_sigma = [weight_B_theta', zeros_vector(3)']';"
+        expected_decl = "matrix[K_B, 2] weight_B_theta_sigma = [weight_B_theta', zeros_vector(K_B)']';"
         assert expected_decl in stmt_str, "Transformed parameter code does not contain expected weight variable declaration"
 
 

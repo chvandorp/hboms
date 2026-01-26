@@ -924,6 +924,9 @@ def expandType(base: Type, shape: tuple[Expr, ...]) -> Array:
     as expressions like `array[3] array[2] real` are illegal in Stan.
     New dimensions are added on the left.
     """
+    if not isinstance(shape, tuple):
+        raise Exception("shape must be a tuple")
+
     match base:
         case Array(base_base, base_shape):
             return Array(base_base, shape + base_shape)
@@ -935,6 +938,9 @@ def expandVar(var: Var, shape: tuple[Expr, ...]) -> Var:
     """
     expand the type of a variable
     """
+    if not isinstance(shape, tuple):
+        raise Exception("shape must be a tuple")
+
     return Var(expandType(var.var_type, shape), var.name)
 
 

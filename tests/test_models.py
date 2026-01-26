@@ -78,7 +78,7 @@ class TestModel:
                 0.2,
                 "random",
                 scale=0.05,
-                covariates="U",
+                covariates=["U"],
                 cw_values={"U": weight_U_theta_gt},
             ),
             hboms.Parameter("sigma", 0.1, "fixed"),
