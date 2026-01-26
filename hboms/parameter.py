@@ -363,8 +363,8 @@ class FixedParameter(Parameter):
         idx = self.level.var.idx(sl.intVar("r"))
         num_params = self.level.num_cat_var
         if apply_idx:
-            return sl.expandVar(self.var, num_params).idx(idx)
-        return sl.expandVar(self.var, num_params)
+            return sl.expandVar(self.var, (num_params,)).idx(idx)
+        return sl.expandVar(self.var, (num_params,))
 
     def genstmt_data(self):
         decls: list[sl.Decl] = []
