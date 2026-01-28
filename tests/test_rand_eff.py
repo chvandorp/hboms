@@ -139,7 +139,7 @@ class TestRandomEffects:
 
         R = 10
         data = {"Time" : [np.linspace(1, 5, 5) for _ in range(R)]}
-        sims = model.simulate(data, 1)
+        sims = model.simulate(data, 1, seed=144169)
         sim_data, sim_params = sims[0]
 
         model.sample(
@@ -161,3 +161,42 @@ class TestRandomEffects:
         assert abs(mean_rand_a) < 0.1, f"Mean of rand_a samples should be close to 0, got {mean_rand_a}"
         assert abs(std_rand_a - 1.0) < 0.1, f"Std of rand_a samples should be close to 1, got {std_rand_a}"
 
+
+
+    def test_rand_eff_model_corr(self):
+        """
+        Correlated parameters need rand_<parname> values in the GQ block.
+        values are defined in block_a_b_c in the stan code (parameters block).
+        """
+
+        params = [
+            hboms.Parameter("a", 0.3, "random", scale=0.1),
+            hboms.Parameter("b", 0.2, "random", scale=0.1, noncentered=True)
+        ]
+        corrs = [hboms.Correlation(["a", "b"])]
+
+        model = hboms.HbomsModel(
+            name = "test_rand_corr",
+            state = [hboms.Variable("x")],
+            odes = "ddt_x = a * x + b;",
+            init = "x_0 = 0.01;",
+            params = params,
+            obs = [hboms.Observation("X")],
+            dists = [hboms.StanDist("normal", "X", ["x", "0.1"])],
+            correlations = corrs,
+            model_dir = self.output_dir,
+        )
+
+        R = 10
+        data = {"Time" : [np.linspace(1, 5, 5) for _ in range(R)]}
+        sims = model.simulate(data, 1, seed=144169)
+        sim_data, sim_params = sims[0]
+
+        model.sample(
+            sim_data, iter_warmup=200, iter_sampling=200, 
+            chains=1, seed=42, show_progress=False,
+            step_size=0.01
+        )
+
+        assert "rand_a" in model.fit.stan_variables(), "rand_a should be in the fitted model variables."
+        assert "rand_b" in model.fit.stan_variables(), "rand_b should be in the fitted model variables."

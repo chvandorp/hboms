@@ -1314,6 +1314,10 @@ class ParameterBlock(Parameter):
         self._corr_value = corr_value
         self._intensity = intensity
 
+        # the var is the vector of all parameters in the block
+        self._var = sl.Var(sl.Vector(n), f"block_{self._name}")
+
+
     def __contains__(self, item: Parameter) -> bool:
         return any([item.name == p.name for p in self._params])
 
@@ -1370,7 +1374,7 @@ class ParameterBlock(Parameter):
     @property
     def level_type(self) -> LevelType:
         # currently the level_type has to be fixed for parameter blocks
-        return "fixed"
+        return "fixed"        
 
     def get_type(self) -> str:
         return "block"
@@ -1602,13 +1606,36 @@ class ParameterBlock(Parameter):
 
         return trans_decls
 
+
     def genstmt_gq(self) -> list[sl.Stmt]:
+        # compute correlation matrix
         n = sl.LiteralInt(len(self._params))
         corrmat_decl = sl.DeclAssign(
             sl.Var(sl.Matrix(n, n), f"corr_{self._name}"),
             sl.Call("tcrossprod", [self._chol]),
         )
-        return [corrmat_decl]
+        stmts: list[sl.Stmt] = [corrmat_decl]
+        # compute "random effects" for non-centered parameters (if any)
+
+        nc_params = [p for p in self._params if p.noncentered]
+        if not nc_params:
+            return stmts
+
+        stmts.append(sl.comment("random effects for non-centered parameters in the correlation block"))
+
+        R = sl.intVar("R")
+        one_par_per_unit = self.level is None # note that random level is not supported here
+        num_pars = R if one_par_per_unit else self.level.num_cat_var
+        array_var = sl.expandVar(self.var, (num_pars,)) # array[R] vector[n] block_x_y_z
+        
+        for i, p in enumerate(self._params):
+            if not p.noncentered:
+                continue
+            rand_var = sl.expandVar(p.rand_var, (num_pars,))
+            value = array_var.idx(sl.fullRange(), sl.LiteralInt(i + 1))
+            decl = sl.DeclAssign(rand_var, value)
+            stmts.append(decl)
+        return stmts
 
     def genstmt_data_simulator(self) -> list[sl.Decl]:
         n = sl.LiteralInt(len(self._params))
