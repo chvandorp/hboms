@@ -11,6 +11,7 @@ from .correlation import Correlation
 from .covariate import Covariate, ContCovariate, CatCovariate, group_covars
 from .prior import Prior
 from .transform import constr_to_unconstr_float
+from .transform_expr import domain_transform, inverse_domain_transform
 
 
 def select_default_rand_param_dist(
@@ -30,103 +31,6 @@ def select_default_rand_param_dist(
         case _:
             # all other cases get (truncated) normal (FIXME!)
             return "normal"
-
-
-def domain_transform(
-    val: sl.Expr, lbound: Optional[float], ubound: Optional[float], array: bool = False,
-    loc: Optional[sl.Expr] = None, scale: Optional[sl.Expr] = None
-) -> sl.Expr:
-    """
-    Generate expressions for transforming unconstraint values to a bounded interval.
-
-    Parameters
-    ----------
-    val : sl.Expr
-        the unconstrained value to-be transformed.
-    lbound : Optional[float]
-        lower bound of the transformed value.
-    ubound : Optional[float]
-        upper bound of the transformed value.
-    array : bool
-        is val of type array? In that case we have to convert to array and back.
-        The default is False
-    loc : Optional[sl.Expr]
-        optional location parameter for the transformation.
-        used for e.g. noncentered parameters.
-    scale : Optional[sl.Expr]
-        optional scale parameter for the transformation.
-        used for e.g. noncentered parameters.
-
-    Raises
-    ------
-    Exception
-        Raise an exception if the lbound and ubound types are invalid.
-
-    Returns
-    -------
-    sl.Expr
-        Stan expression for the transformed value.
-    """
-
-    def to_vec(x):
-        return sl.Call("to_vector", [x]) if array else x
-
-    def to_array(x):
-        return sl.Call("to_array_1d", [x]) if array else x
-
-
-    to_vec_applied = True
-    match (loc, scale):
-        case (None, None):
-            # no linear transformation
-            to_vec_applied = False
-        case (sl.Expr(), None):
-            # apply a linear transformation to the value
-            val = loc + to_vec(val)
-        case (None, sl.Expr()):
-            # apply a linear transformation to the value
-            val = scale * to_vec(val)
-        case (sl.Expr(), sl.Expr()):
-            # apply a linear transformation to the value
-            val = loc + scale * to_vec(val)
-        case _:
-            raise Exception("invalid loc and scale parameters for domain transformation")
-
-    if to_vec_applied:
-        # do not apply to_vector twice..."""
-        to_vec = lambda x: x
-
-    match (lbound, ubound):
-        case (None, None):
-            return to_array(val) if to_vec_applied else val
-        case (float(), None):
-            exp_val = sl.Call("exp", [val])
-            if lbound == 0.0:
-                return to_array(exp_val) if to_vec_applied else exp_val
-            # we have to convert to vector to translate
-            exp_vec_val = to_vec(exp_val)
-            translated_val = to_array(sl.LiteralReal(lbound) + exp_vec_val)
-            return translated_val
-        case (None, float()):
-            vec_val = to_vec(val)
-            exp_vec_val = sl.Call("exp", [sl.Negate(vec_val)])
-            if ubound == 0.0:
-                return to_array(sl.Negate(exp_vec_val))
-            translated_val = sl.LiteralReal(ubound) - exp_vec_val
-            return to_array(translated_val)
-        case (float(), float()):
-            expit_val = sl.Call("inv_logit", [val])
-            lb = sl.LiteralReal(lbound)
-            ub = sl.LiteralReal(ubound)
-            if lbound == 0.0 and ubound == 1.0:
-                return to_array(expit_val) if to_vec_applied else expit_val
-            vec_expit_val = to_vec(expit_val)
-            if lbound == 0.0:
-                return to_array(ub * vec_expit_val)
-            scaled_val = lb + sl.Par(ub - lb) * vec_expit_val
-            return to_array(scaled_val)
-        case _:
-            raise Exception("invalid parameter bounds")
 
 
 ParamSpace = Literal["real", "vector", "matrix", "rugged_vector", "spline"]
@@ -571,6 +475,22 @@ class RandomParameter(Parameter):
 
     def get_type(this) -> str:
         return "random"
+    
+    def num_params(self) -> sl.Expr:
+        """
+        Get the number of random parameters based on the level type.
+        This is equal to the number of units R if the level is None or random,
+        and equal to the number of categories of the level otherwise.
+
+        Returns
+        -------
+        sl.Expr
+            expression for the number of random parameters.
+        """
+        R = sl.intVar("R")
+        if self.level is None or self.level_type == "random":
+            return R
+        return self.level.num_cat_var
 
     def expand_and_index_var(self, apply_idx=False) -> sl.Expr:
         R, r = sl.intVar("R"), sl.intVar("r")
@@ -593,12 +513,10 @@ class RandomParameter(Parameter):
         return decls
 
     def genstmt_params(self) -> list[sl.Decl]:
-        R = sl.Var(sl.Int(), "R")
         # by default, each unit has it's own random effect,
         # but the random effect can also be specified on a group level
         # which is defined by a categorical covariate
-        one_par_per_unit = self.level is None or self._level_type == "random"
-        num_pars = R if one_par_per_unit else self.level.num_cat_var
+        num_pars = self.num_params()
         # expand the parameter to the right shape
         # choose between centered and non-centered parameterization
         if self._noncentered:
@@ -612,7 +530,7 @@ class RandomParameter(Parameter):
         return decls
 
     def genstmt_trans_params(self) -> List[sl.Stmt]:
-        R, r = sl.intVar("R"), sl.intVar("r") # TODO: levels
+        R, r = sl.intVar("R"), sl.intVar("r")
         # if the parameter is non-centered, we have to transform it
         # otherwise we can just sample the parameter directly and don't need to transform
         if not self._noncentered:
@@ -642,8 +560,7 @@ class RandomParameter(Parameter):
             par_decl = sl.DeclAssign(par_array, trans_par)
             return [par_decl]
         # else...
-        one_par_per_unit = self.level is None or self._level_type == "random"
-        num_pars = R if one_par_per_unit else self._level.num_cat_var
+        num_pars = self.num_params()
         array = sl.expandVar(self.var, (num_pars,))
         rand_effect_array = sl.expandVar(self.rand_var, (num_pars,))
         # allow for categorical covariates by selecting the correct loc value
@@ -891,6 +808,80 @@ class RandomParameter(Parameter):
         if self._level is not None and self._level_type == "random":
             decls.append(sl.Decl(self._level_scale))
         return self.genstmt_data() + decls
+
+    def genstmt_gq(self) -> list[sl.Stmt]:
+        """
+        Generate an AST for the GQ block corresponding to this parameter.
+        If the parameter has a centered parameterization, the GQ block
+        will include the "rand_<parname>" variable declaration and definition.
+        This is useful for e.g. finding correlationss between "random effects".
+        In the non-centered case, there is no additional variable to declare,
+        as the rand_<parname> is defined in the parameters block.
+        """            
+
+        if self._noncentered:
+            return []
+        # else...
+
+        # SOME CASES ARE NOT IMPLEMENTED YET!
+        if self.space != "real":
+            from .logger import logger
+            msg = (
+                "random effect transformation in GQ block " + 
+                f"not implemented parameter '{self.name}' " + 
+                "because of non-scalar parameter space."
+            )
+            logger.warning(msg)
+            return []
+
+        if self._contcovs:
+            from .logger import logger
+            msg = (
+                "random effect transformation in GQ block " + 
+                f"not implemented for parameter '{self.name}' " +
+                "because of continuous covariates."
+            )
+            logger.warning(msg)
+            return []
+
+        stmts: list[sl.Stmt] = []
+
+        num_pars = self.num_params()
+        rand_var = self.rand_var
+        rand_array = sl.expandVar(rand_var, (num_pars,))
+        var_array = sl.expandVar(self.var, (num_pars,))
+        # if the parameter has categorical covariates, we have to select the correct loc value
+        if len(self._catcovs) == 0:
+            loc = self._loc
+        else:
+            cov = self._catcovs[0]
+            num_cats = cov.num_cat_var
+            if self.level is not None and self.level_type == "fixed":
+                # in this case, the loc array is defined on the level
+                # so we have to index it with the restricted categories
+                restricted_catcov_var = cov.restricted_var(self.level)
+                catcov_var_array = sl.expandVar(restricted_catcov_var, (num_pars,))
+            else:
+                catcov_var_array = sl.expandVar(cov.var, (num_pars,))
+            loc_array = sl.expandVar(self._loc, (num_cats,))
+            loc = sl.Call("to_vector", [loc_array.idx(catcov_var_array)])
+
+        # if the parameter has a random level, we have to use both the scale and the level_scale
+        if self.level is not None and self.level_type == "random":
+            scale = sl.Call("sqrt", sl.square(self.scale) + sl.square(self.level_scale))
+        else:
+            scale = self._scale
+
+        cent_val = inverse_domain_transform(
+            var_array, self._lbound, self._ubound, array=True,
+            loc=loc, scale=scale
+        )
+
+        stmts.append(sl.DeclAssign(rand_array, cent_val))
+
+        return stmts
+
+
 
     def genstmt_gq_simulator(
         self, transform_func: Callable = lambda x: x

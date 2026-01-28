@@ -990,11 +990,24 @@ def gen_gq_block(
 
     statements.append(loop_units)
 
+    # add random effects for centered parameters
+    centered_random_params = [
+        p for p in params if p.get_type() == "random" and not p.noncentered
+    ]
+    if len(centered_random_params) > 0:
+        statements.append(sl.comment("compute random effects for centered parameters"))
+
+        statements += util.flatten([
+            p.genstmt_gq() for p in centered_random_params
+        ])
+
+    # optional prior samples: might be phased out later
+
     if options["prior_samples"]:
         statements.append(sl.comment("generate prior samples"))
         statements += gen_prior_samples(params, corr_params)
 
-
+    # finally, include any user-provided plugin code
 
     if plugin_code is not None:
         statements.append(sl.comment("User-provided plugin code"))
