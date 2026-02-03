@@ -1469,8 +1469,11 @@ class ParameterBlock(Parameter):
         num_pars = R if one_par_per_unit else self.level.num_cat_var
 
         # declare loc and scale parameters
-        loc_decls = sl.gen_decl_lists([p.loc for p in self._params])
-        scale_decls = sl.gen_decl_lists([p.scale for p in self._params])
+        # don't declare loc or scale if they have a DiracDelta prior
+        def has_ddp(p: RandomParameter, attr: str) -> bool:
+            return isinstance(getattr(p, f"_{attr}_prior"), DiracDeltaPrior)
+        loc_decls = sl.gen_decl_lists([p.loc for p in self._params if not has_ddp(p, "loc")])
+        scale_decls = sl.gen_decl_lists([p.scale for p in self._params if not has_ddp(p, "scale")])
 
         decls = [
             sl.Decl(sl.Var(sl.Array(sl.Vector(n), (num_pars,)), f"block_{self._name}")),
