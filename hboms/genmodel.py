@@ -182,7 +182,7 @@ def gen_functions_block(
         )
         functions_block.append(genfunctions.gen_vectorized_logitnormal_lpdf(array_loc=False))  
 
-    if require_logitnormal and options["prior_samples"]:
+    if require_logitnormal: ## TODO: this may be redundant
         functions_block.append(
             sl.comment("logit-normal random number generator")
         )
@@ -248,6 +248,16 @@ def gen_trans_param_block(
 
     # create a list of statements
     statements: list[sl.Stmt] = []
+
+    # implement Dirac Delta priors: i.e. define parameters with
+    # such priors by setting them equal to constants or other parameters
+    #  in the transformed parameters block.
+    dirac_delta_stmts = util.flatten([
+        p.genstmt_dirac_delta_priors() for p in params
+    ])
+    if len(dirac_delta_stmts) > 0:
+        statements.append(sl.comment("implement Dirac Delta priors"))
+        statements += dirac_delta_stmts
 
     # define noncentered parameters from stdnorm random effects (exclude correlated parameters for now)
     noncentered_params = [p for p in uncorr_params if p.get_type() == "random" and p.noncentered]
@@ -704,29 +714,6 @@ def gen_prior(
     return prior
 
 
-
-def gen_prior_samples(
-    params: list[Parameter], 
-    corr_params: list[ParameterBlock],
-) -> list[sl.Stmt]:
-    uncorr_params = [p for p in params if not any([(p in cp) for cp in corr_params])]
-
-    uncorr_prior_samples = util.flatten([
-        p.genstmt_prior_samples()
-        for p in uncorr_params
-        if p.get_type() not in ["const", "const_indiv"]
-    ])
-
-    corr_prior_samples = util.flatten([
-        p.genstmt_prior_samples() for p in corr_params
-    ])
-
-    prior_samples = uncorr_prior_samples + corr_prior_samples
-
-    return prior_samples
-
-
-
 def gen_model_block(
     params: list[Parameter],
     corr_params: list[ParameterBlock],
@@ -1000,12 +987,6 @@ def gen_gq_block(
         statements += util.flatten([
             p.genstmt_gq() for p in centered_random_params
         ])
-
-    # optional prior samples: might be phased out later
-
-    if options["prior_samples"]:
-        statements.append(sl.comment("generate prior samples"))
-        statements += gen_prior_samples(params, corr_params)
 
     # finally, include any user-provided plugin code
 

@@ -780,7 +780,6 @@ DEFAULT_OPTIONS = {
     "abs_tol": 1e-6,
     "max_num_steps": 1000000,
     "init_obs": False,
-    "prior_samples": False,
 }
 
 
@@ -1036,8 +1035,8 @@ class HbomsModel:
         into usable components.
         """
         # parse covariates before parameters
-        covariates = None
-        covar_dict = {}
+        covariates: list[covariate.Covariate] | None = None
+        covar_dict: dict[str, covariate.Covariate] = {}
         if self._model_def.covariates is not None:
             for cov in self._model_def.covariates:
                 cov_kwargs = {"categories": cov.categories, "dim": cov.dim}
@@ -1064,26 +1063,36 @@ class HbomsModel:
                 "cw_values": p.cw_values,
             }
             # convert Prior objects
-            if p.loc_prior is not None:
-                par_kwargs["loc_prior"] = prior.Prior(
-                    p.loc_prior.name, p.loc_prior.params
-                )
-            if p.scale_prior is not None:
-                par_kwargs["scale_prior"] = prior.Prior(
-                    p.scale_prior.name, p.scale_prior.params
-                )
-            if p.prior is not None:
-                par_kwargs["prior"] = prior.Prior(p.prior.name, p.prior.params)
+
+            priors = {"loc_prior" : p.loc_prior, "scale_prior": p.scale_prior, "prior": p.prior}
+            # add level_scale_prior if needed
             if p.level is not None:
-                # TODO: test that the covariate exists and that it is categorical
+                priors["level_scale_prior"] = p.level_scale_prior
+            # process priors
+            for key, prior_obj in priors.items():
+                match prior_obj:
+                    case None:
+                        pass
+                    case frontend.StanPrior(priorname, hypparams):
+                        par_kwargs[key] = prior.AbsContPrior(
+                            priorname, hypparams
+                        )
+                    case frontend.DiracDeltaPrior(hypparam):
+                        par_kwargs[key] = prior.DiracDeltaPrior(hypparam)
+                    case _:
+                        raise ValueError(f"invalid prior type for {key} of parameter {p.name}")
+                    
+            if p.level is not None:
+                if p.level not in covar_dict:
+                    raise ValueError(f"level covariate '{p.level}' for parameter '{p.name}' is not defined.")
                 cov = covar_dict[p.level]
+                if not isinstance(cov, covariate.CatCovariate):
+                    raise ValueError(f"level covariate '{p.level}' for parameter '{p.name}' must be categorical.")
                 par_kwargs["level"] = cov
                 par_kwargs["level_type"] = p.level_type
                 par_kwargs["level_scale"] = p.level_scale
-                if p.level_scale_prior is not None:
-                    par_kwargs["level_scale_prior"] = prior.Prior(
-                        p.level_scale_prior.name, p.level_scale_prior.params
-                    )
+                # level scale prior is already handled above
+
             if p.noncentered is not None:
                 par_kwargs["noncentered"] = p.noncentered
 

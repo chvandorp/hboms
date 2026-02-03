@@ -165,8 +165,10 @@ def optimize_type(typ: sl.Type) -> sl.Type:
             return sl.Function(
                 optimize_type(return_type), opt_argument_types, data=typ.data
             )
+        case sl.UnresolvedType():
+            return sl.UnresolvedType()
         case _:
-            raise Exception("could not optmized type " + str(typ))
+            raise Exception("could not optimize type " + str(typ))
 
 
 def optimize_expr(expr: sl.Expr) -> sl.Expr:

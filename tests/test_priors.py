@@ -1,4 +1,4 @@
-from hboms.prior import Prior
+from hboms.prior import AbsContPrior
 from hboms import stanlang as sl
 from hboms.deparse import deparse_stmt
 
@@ -6,7 +6,7 @@ from hboms.deparse import deparse_stmt
 class TestPrior:
     def test_prior(self):
         x = sl.Var(sl.Real(), "x")
-        prior = Prior("normal", [0.0, 1.0])
+        prior = AbsContPrior("normal", [0.0, 1.0])
         stmts = prior.gen_sampling_stmt(x)
         stmt_strs = [deparse_stmt(stmt) for stmt in stmts]
         expected_stmt_strs = [
@@ -18,7 +18,7 @@ class TestPrior:
         x = sl.Var(sl.Real(), "x")
         def transform(x):
             return sl.Call("log", x)
-        prior = Prior("normal", [0.0, 1.0], transform=transform)
+        prior = AbsContPrior("normal", [0.0, 1.0], transform=transform)
         stmts = prior.gen_sampling_stmt(x)
         stmt_strs = [deparse_stmt(stmt) for stmt in stmts]
         expected_stmt_strs = [

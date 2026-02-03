@@ -3,7 +3,7 @@ import numpy as np
 import hboms
 from hboms.parameter import RandomParameter, FixedParameter, ParameterBlock
 from hboms.genmodel import require_logitnormal_functions
-from hboms.prior import Prior
+from hboms.prior import AbsContPrior
 
 
 class TestLogitNormalDist():
@@ -31,7 +31,7 @@ class TestLogitNormalDist():
 
 
         # a single fixed parameter with logitnormal prior
-        prior = Prior("logitnormal", [0.0, 1.0, 0.0, 1.0])
+        prior = AbsContPrior("logitnormal", [0.0, 1.0, 0.0, 1.0])
 
         params = [
             FixedParameter("b", 0.3, lbound=0.0, ubound=1.0, prior=prior)

@@ -1,12 +1,22 @@
-from typing import Optional, Callable
+from typing import Callable
+from abc import ABC
 
 from . import stanlang as sl
 
+class Prior(ABC):
+    def gen_sampling_stmt(self, par: sl.Expr) -> list[sl.Stmt]:
+        """
+        Generate "sampling statement" from the prior distribution for the given parameter expression.
+        """
+        raise NotImplementedError("gen_sampling_stmt method not implemented in base Prior class.")
 
-class Prior:
+
+class AbsContPrior(Prior):
     def __init__(self, name: str, params: list[float], transform: Callable = lambda x: x) -> None:
         """
-        transform is added for default priors on matrix-valued parameters.
+        Absolute continuous prior distribution (w.r.t. Lebesgue measure).
+
+        `transform` is added for default priors on matrix-valued parameters.
         The default student-t distributions does not accept matrix values,
         so we transform it with to_vector. In this case we use 
         ```
@@ -36,11 +46,47 @@ class Prior:
         stmts: list[sl.Stmt] = [sl.Sample(trans_par, sl.Call(self._name, lits))]
         return stmts
     
-    def gen_rng_expr(self) -> sl.Expr:
+
+class DiracDeltaPrior(Prior):
+    def __init__(self, param: str | float) -> None:
         """
-        Generate an expression that generates a sample from the prior distribution.        
+        A Dirac delta prior that fixes a parameter to a specific value.
+
+        Parameters:
+        -----------
+        param: str | float
+            The fixed value or the name of the parameter to which
+            this prior is anchored.
         """
-        lits: list[sl.Expr] = [sl.LiteralReal(x) for x in self._params]
-        ## FIXME: apply transform? Add inverse transform with jacobian correction?
-        expr: sl.Expr = sl.Call(f"{self._name}_rng", lits)
-        return expr
+        self._param = param
+
+    @property
+    def name(self) -> str:
+        return "dirac_delta"
+
+    @property
+    def param(self) -> str | float:
+        return self._param
+    
+    @property
+    def var(self) -> sl.Stmt:
+        match self._param:
+            case str():
+                ## FIXME: resolve the type during parsing of the hboms model
+                return sl.Var(sl.UnresolvedType(), self._param)
+            case float():
+                return sl.LiteralReal(self._param)
+            
+    def gen_defining_stmt(self, par: sl.Expr) -> list[sl.Stmt]:
+        """
+        Generate assignment statement to set the parameter equal to the fixed value.
+        """
+        decl = sl.DeclAssign(par, self.var)
+        return [decl]
+    
+    def gen_sampling_stmt(self, par: sl.Expr) -> list[sl.Stmt]:
+        """
+        Dirac delta priors do not generate sampling statements.
+        """
+        return []
+    

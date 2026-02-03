@@ -9,7 +9,7 @@ from . import utilities as util
 from . import stanlang as sl
 from .correlation import Correlation
 from .covariate import Covariate, ContCovariate, CatCovariate, group_covars
-from .prior import Prior
+from .prior import Prior, AbsContPrior, DiracDeltaPrior
 from .transform import constr_to_unconstr_float
 from .transform_expr import domain_transform, inverse_domain_transform
 
@@ -182,6 +182,9 @@ class Parameter(ABC):
 
     def genstmt_trans_params(self) -> list[sl.Stmt]:
         return []
+    
+    def genstmt_dirac_delta_priors(self) -> list[sl.Stmt]:
+        return []
 
     def genstmt_model(self) -> list[sl.Stmt]:
         return []
@@ -230,10 +233,10 @@ class FixedParameter(Parameter):
             match self._space:
                 case "real" | "vector":
                     # default student-t will work fine for scalars and vectors
-                    self._prior = Prior("student_t", [3.0, 0.0, 2.5])
+                    self._prior = AbsContPrior("student_t", [3.0, 0.0, 2.5])
                 case "matrix":
                     # but matrix variables are not allowed. Add a transform!
-                    self._prior = Prior(
+                    self._prior = AbsContPrior(
                         "student_t",
                         [3.0, 0.0, 2.5],
                         transform=lambda x: sl.Call("to_vector", x),
@@ -297,13 +300,6 @@ class FixedParameter(Parameter):
     def genstmt_data_simulator(self) -> list[sl.Decl]:
         # add data declarations (shapes) and parameter declarations
         return self.genstmt_data() + self.genstmt_params()
-    
-    def genstmt_prior_samples(self) -> List[sl.Stmt]:
-        rng_expr = self._prior.gen_rng_expr()
-        # create declaration and assignment statement
-        # the variable name is `prior_sample_{parameter_name}`
-        return [sl.DeclAssign(sl.Var(self.var.var_type, f"prior_sample_{self._name}"), rng_expr)]
-
 
 
 
@@ -387,7 +383,7 @@ class RandomParameter(Parameter):
         # TODO: how does the space influence self._cws?
         self._cws = [cov.weight_var(self._name) for cov in self._contcovs]
 
-        def_hyp_prior = Prior("student_t", [3.0, 0.0, 2.5])
+        def_hyp_prior = AbsContPrior("student_t", [3.0, 0.0, 2.5])
         self._loc_prior = def_hyp_prior if loc_prior is None else loc_prior
         self._scale_prior = def_hyp_prior if scale_prior is None else scale_prior
 
@@ -523,18 +519,28 @@ class RandomParameter(Parameter):
             array = sl.expandVar(self.rand_var, (num_pars,)) # "rand_parname"
         else:
             array = sl.expandVar(self.var, (num_pars,)) # just "parname"
-        decls = [sl.Decl(x) for x in [array, self._loc, self._scale] + self._cws]
+        free_pars = [array]
+        # check that loc and scale don't have dirac delta priors
+        if not isinstance(self._loc_prior, DiracDeltaPrior):
+            free_pars.append(self._loc)
+        if not isinstance(self._scale_prior, DiracDeltaPrior):
+            free_pars.append(self._scale)
         # declare an additional scale if the parameter has additional group-specific random effects
         if self.level is not None and self.level_type == "random":
-            decls.append(sl.Decl(self.level_scale))
+            if not isinstance(self._level_scale_prior, DiracDeltaPrior):
+                free_pars.append(self._level_scale)
+        # create declarations for the free parameters
+        decls = [sl.Decl(x) for x in free_pars + self._cws]
         return decls
 
     def genstmt_trans_params(self) -> List[sl.Stmt]:
         R, r = sl.intVar("R"), sl.intVar("r")
+        stmts: list[sl.Stmt] = []
+
         # if the parameter is non-centered, we have to transform it
         # otherwise we can just sample the parameter directly and don't need to transform
         if not self._noncentered:
-            return []
+            return stmts
         # else, we need to do extra work: transform the random effects
         if self.level is not None and self.level_type == "random":
             # build the covariance matrix for the random level effects
@@ -582,6 +588,7 @@ class RandomParameter(Parameter):
         # linear transformation of the random effect
         lin_trans_rand_effect = loc + scale * rand_effect_array.idx(r)
         decl = sl.Decl(array)
+        stmts.append(decl)
         # use a for loop to fill the array with transformed values
         for_loop = sl.ForLoop(
             r,
@@ -591,7 +598,32 @@ class RandomParameter(Parameter):
                 domain_transform(lin_trans_rand_effect, self._lbound, self._ubound),
             ),
         )
-        return [decl, for_loop]
+        stmts.append(for_loop)
+        return stmts
+
+
+    def genstmt_dirac_delta_priors(self) -> list[sl.Stmt]:
+        """
+        This methods makes sure that Diract Delta priors are implemented 
+        for the hyper parameters: e.g. loc, scale, level_scale.
+        This method should be called during creation of the transformed parameters
+        block.
+
+        Returns
+        -------
+        list[sl.Stmt]
+            list of statements implementing the Dirac Delta priors.
+
+        """
+        stmts: list[sl.Stmt] = []
+        if isinstance(self._loc_prior, DiracDeltaPrior):
+            stmts += self._loc_prior.gen_defining_stmt(self._loc)
+        if isinstance(self._scale_prior, DiracDeltaPrior):
+            stmts += self._scale_prior.gen_defining_stmt(self._scale)
+        if self.level is not None and self.level_type == "random":
+            if isinstance(self._level_scale_prior, DiracDeltaPrior):
+                stmts += self._level_scale_prior.gen_defining_stmt(self._level_scale)
+        return stmts
 
 
     def genstmt_hyper_prior(self) -> list[sl.Stmt]:
@@ -606,7 +638,7 @@ class RandomParameter(Parameter):
         priors += self._loc_prior.gen_sampling_stmt(self._loc)
         priors += self._scale_prior.gen_sampling_stmt(self._scale)
         # add hyper prior for covariate weights (TODO: customize)
-        hyper_prior = Prior("student_t", [3.0, 0.0, 2.5])
+        hyper_prior = AbsContPrior("student_t", [3.0, 0.0, 2.5])
         for x in self._cws:
             priors += hyper_prior.gen_sampling_stmt(x)
         # add prior for level scale parameter
@@ -996,20 +1028,6 @@ class RandomParameter(Parameter):
         )
         return [rng_stmt]
     
-    def genstmt_prior_samples(self) -> List[sl.Stmt]:
-        loc_rng_expr = self._loc_prior.gen_rng_expr()
-        scale_rng_expr = self._scale_prior.gen_rng_expr()
-        rng_params = [loc_rng_expr, scale_rng_expr]
-        match self._distribution:
-            case "logitnormal":
-                rng_params += [sl.LiteralReal(self._lbound), sl.LiteralReal(self._ubound)]
-            case _:
-                pass
-        rng_expr = sl.Call(self._distribution + "_rng", rng_params)
-        # create declaration and assignment statement
-        # the variable name is `prior_sample_{parameter_name}`
-        return [sl.DeclAssign(sl.Var(self.var.var_type, f"prior_sample_{self._name}"), rng_expr)]
-
 
 
 class ConstParameter(Parameter):
@@ -1087,10 +1105,10 @@ class IndivParameter(Parameter):
             match self._space:
                 case "real" | "vector":
                     # default student-t will work fine for scalars and vectors
-                    self._prior = Prior("student_t", [3.0, 0.0, 2.5])
+                    self._prior = AbsContPrior("student_t", [3.0, 0.0, 2.5])
                 case "matrix":
                     # but matrix variables are not allowed. Add a transform!
-                    self._prior = Prior(
+                    self._prior = AbsContPrior(
                         "student_t",
                         [3.0, 0.0, 2.5],
                         transform=lambda x: sl.Call("to_vector", x),
@@ -1147,14 +1165,11 @@ class IndivParameter(Parameter):
             case "vector" | "matrix":
                 R, r = sl.intVar("R"), sl.intVar("r")
                 prior_r = self._prior.gen_sampling_stmt(self.var.idx(r))
-                if len(prior_r) == 1:
-                    for_loop = sl.ForLoop(r, sl.Range(sl.one(), R), prior_r[0])
-                elif len(prior_r) > 1:
-                    for_loop = sl.ForLoop(r, sl.Range(sl.one(), R), sl.Scope(prior_r))
-                else:
-                    raise Exception(
-                        "expected Prior.gen_sampling_stmt to return one or more statements"
-                    )
+                if len(prior_r) == 0:
+                    raise ValueError("expected Prior.gen_sampling_stmt to return one or more statements")
+                # add for loop around the prior statement(s)
+                prior_r_stmt = prior_r[0] if len(prior_r) == 1 else sl.Scope(prior_r)
+                for_loop = sl.ForLoop(r, sl.Range(sl.one(), R), prior_r_stmt)
                 stmt_list = [for_loop]
         return stmt_list
 
@@ -1439,7 +1454,7 @@ class ParameterBlock(Parameter):
             ]
 
         # priors for location, scale and correlation matrix
-        lkj_prior = Prior("lkj_corr_cholesky", [self._intensity])
+        lkj_prior = AbsContPrior("lkj_corr_cholesky", [self._intensity])
         for p in self._params:
             priors += p.genstmt_hyper_prior()
 
@@ -1702,23 +1717,6 @@ class ParameterBlock(Parameter):
         # we have to wrap this in a Scope to allow for a declaration
         return [sl.Scope(stmts)]
     
-
-    def genstmt_prior_samples(self) -> List[sl.Stmt]:
-        ## FIXME (?) : we currently ignore correlations when generating prior samples
-
-        from hboms.logger import logger
-
-        logger.warning(
-            "Prior samples for correlated parameters are generated independently"
-        )
-
-        stmts = []
-
-        for p in self._params:
-            stmts += p.genstmt_prior_samples()
-
-        return stmts
-
 
 def gen_corr_block(corr: Correlation, params: List[Parameter]) -> ParameterBlock:
     """

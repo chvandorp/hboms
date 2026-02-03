@@ -2,6 +2,7 @@
 
 from .frontend import (
     StanPrior,
+    DiracDeltaPrior,
     Parameter,
     Correlation,
     Covariate,
