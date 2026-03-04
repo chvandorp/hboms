@@ -5,7 +5,13 @@ preparing initial values etc.
 
 import pytest
 import hboms
-from hboms.model import prepare_data, prepare_init, prepare_simulation_times
+from hboms.model_helper_funcs import (
+    prepare_data, 
+    prepare_init, 
+    prepare_simulation_times,
+    restrict_cat_covar_to_level,
+    find_cat_requiring_level_restriction
+)
 import numpy as np
 import scipy.stats as sts
 import os
@@ -176,7 +182,6 @@ class TestSimTime():
 
 class TestCatsAndLevels:
     def test_resrict_categorical_covariates(self):
-        from hboms.model import restrict_cat_covar_to_level
 
         # example that works
 
@@ -205,7 +210,6 @@ class TestCatsAndLevels:
 
 
     def test_find_restrictions(self):
-        from hboms.model import find_cat_requiring_level_restriction
         from hboms.covariate import CatCovariate
         from hboms.parameter import RandomParameter
             
