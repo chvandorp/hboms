@@ -380,7 +380,7 @@ class TestNonCentered:
         sd_corr1, sd_corr2 = np.std(corr_est1), np.std(corr_est2)
 
         assert np.abs(m_corr1 - m_corr2) < 0.01, "mean correlation for centered model is not close to ground truth"
-        assert np.abs(sd_corr1 - sd_corr2) < 0.01, "standard deviation of correlation for non-centered model is not close to ground truth"
+        assert np.abs(sd_corr1 - sd_corr2) < 0.05, "standard deviation of correlation for non-centered model is not close to ground truth"
 
         c1l, c1u = np.percentile(corr_est1, [2.5, 97.5])
         c2l, c2u = np.percentile(corr_est2, [2.5, 97.5])

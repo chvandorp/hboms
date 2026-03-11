@@ -12,6 +12,8 @@ from . import optimize
 from . import code_checks
 from . import stanlexer # required for transformed parameters' dependencies
 from . import name_checks
+from .logger import logger
+
 
 from .model_helper_funcs import (
     compile_stan_model,
@@ -811,7 +813,10 @@ class HbomsModel:
     def set_init(self, init_dict: dict[str, Any]) -> None:
         """
         Set initial parameter guesses to provided values.
-        FIXME: this method is in development!
+        Values for transformed parameters are not accepted, 
+        as these are updated automatically based on the regular parameters
+        on which they depend. If the user passes a value for a transformed parameter, 
+        a warning is shown and the value is ignored.
 
         Parameters
         ----------
@@ -823,6 +828,9 @@ class HbomsModel:
             val = init_dict.get(p.name)
             if val is None:
                 continue
+            if p.get_type() in ["trans", "trans_indiv"]:
+                logger.warning(f"initial value for transformed parameter '{p.name}' is ignored.")
+                continue 
             p.value = val
 
         # reset the value of the parameter blocks

@@ -809,16 +809,16 @@ def gen_model_block(
 
     if include_likelihood:
         model_block = [
-            sl.EmptyStmt(comment="solve ODEs in parallel"),
+            sl.comment("solve ODEs in parallel"),
             integration,
-            sl.EmptyStmt(comment="compute log-likelihood of observations"),
+            sl.comment("compute log-likelihood of observations"),
             ll_for_loop,
-            sl.EmptyStmt(comment="prior"),
+            sl.comment("prior"),
         ] + prior
     else:
         model_block = [
-            sl.EmptyStmt(comment="likelihood is omitted..."),
-            sl.EmptyStmt(comment="prior")
+            sl.comment("likelihood is omitted..."),
+            sl.comment("prior")
         ] + prior
 
     if plugin_code is not None:
