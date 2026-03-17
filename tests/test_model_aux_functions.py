@@ -192,7 +192,7 @@ class TestCatsAndLevels:
 
         cats = restrict_cat_covar_to_level(data, cov="Treatment", level="Group")
 
-        expected = ["Mock", "Drug", "Drug"]
+        expected = {"A": "Mock", "B": "Drug", "C": "Drug"}
 
         assert cats == expected, "categorical covariate restriction did not work as expected"
 

@@ -138,14 +138,14 @@ def restrict_cat_covar_to_level(data: dict, cov: str, level: str) -> list:
     
     Returns
     -------
-    list
-        List of categories for each value of the level
+    dict[str, str]
+        Dictionary mapping each level value to its corresponding category
     """
     cov_vals = data[cov]
     level_vals = data[level]
 
     unique_level_vals = util.unique(level_vals)
-    restricted_cats = []
+    restricted_cats = {}
     for lv in unique_level_vals:
         units = [i for i, x in enumerate(level_vals) if x == lv]
         cats = util.unique([cov_vals[i] for i in units])
@@ -155,7 +155,7 @@ def restrict_cat_covar_to_level(data: dict, cov: str, level: str) -> list:
                 f"for level value '{lv}' of level '{level}':"
                 f" {cats[0]}, {cats[1]} (and possibly more)"
             )
-        restricted_cats.append(cats[0])
+        restricted_cats[lv] = cats[0]
     return restricted_cats
 
 
@@ -189,19 +189,18 @@ def map_cat_covars(data: dict, catcovs: list[CatCovariate]) -> tuple[dict, dict]
     """
     auxiliary function used by prepare_data and prepare_data_simulator
 
-    TODO: make sure that the order of categories is the same as 
-    defined in the CatCovariate class (i.e. by the user)
+    the order of the categories is used defined and stored in the CatCovariate objects.
     """
     # process and add categorical covariates
     cat_covariates = {cn.name: data[cn.name] for cn in catcovs}
-    num_cat_names = {cn.name: cn.num_cat_var.name for cn in catcovs}
-    # TODO: categories are known by CatCovariate class
+    categories = {cn.name: cn.cats for cn in catcovs}
     cat_mappings = {
-        cn: {x: i + 1 for i, x in enumerate(util.unique(cv))}
-        for cn, cv in cat_covariates.items()
+        cn: {x: i + 1 for i, x in enumerate(cv)}
+        for cn, cv in categories.items()
     }
-    # TODO: use the methods of CatCovariate class
-    num_cats = {num_cat_names[cn]: len(mp) for cn, mp in cat_mappings.items()}
+    # define mapping K_mycov -> number of categories for mycov
+    num_cats = {cn.num_cat_var.name: cn.num_cats for cn in catcovs}
+    # define mapping mycov -> list of integers representing the categories for each unit
     mapped_cat_covariates = {
         cn.name: np.array([cat_mappings[cn.name][x] for x in cat_covariates[cn.name]])
         for cn in catcovs
@@ -249,6 +248,7 @@ def prepare_data(
     """
     # check that level restrictions are well-defined (raise error otherwise)
     check_level_restrictions(data, params)
+    # notice that the covariates are restricted in the Stan mode (transformed data block)
 
     Time = data["Time"]
     R = len(Time)
