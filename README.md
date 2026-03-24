@@ -1,5 +1,7 @@
 # Hierarchical Bayesian ODE Models using Stan
 
+[![codecov](https://codecov.io/gh/chvandorp/hboms/branch/main/graph/badge.svg)](https://codecov.io/gh/chvandorp/hboms)
+
 Python package to automatically generate Stan code for fitting hierarchical ODE models with Stan.
 The integration of the ODEs is distributed over multiple CPU cores using Stan's `map_rect` function.
 
