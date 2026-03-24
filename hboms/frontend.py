@@ -18,15 +18,22 @@ class StanPrior:
     Notice that the name should correspond to a valid Stan distribution,
     or a user-defined distribution in the Stan model code.
 
-    Example:
-        Standard normal prior:
-        `prior = StanPrior(name="normal", params=[0, 1])`
-        Exponential prior with rate 2:
-        `prior = StanPrior(name="exponential", params=[2])`
+    Attributes
+    ----------
+    name : str
+        Name of the Stan distribution.
+    params : list[float]
+        Parameters of the distribution.
 
-    Attributes:
-        name (str): Name of the Stan distribution.
-        params (list[float]): Parameters of the distribution.
+    Examples
+    --------
+    Standard normal prior::
+
+        prior = StanPrior(name="normal", params=[0, 1])
+
+    Exponential prior with rate 2::
+
+        prior = StanPrior(name="exponential", params=[2])
 
     """
     name: str
@@ -41,25 +48,27 @@ class DiracDeltaPrior:
     This can be used to fix e.g. a location or scale parameter to a specific value:
     possibly the location or scale of another parameter.
 
-    Example:
-        Fixing a parameter to a constant value:
-        `prior = DiracDeltaPrior(param=5.0)`
-    
-    Example:
-        Anchoring a parameter to another parameter named "alpha":
-        `prior = DiracDeltaPrior(param="alpha")`
-    
-    Example:
-        Let a be a random parameter with scale `scale_a`, and fix b's scale to a's scale:
-        ```
+    Attributes
+    ----------
+    param : str or float
+        The fixed value or the name of the parameter to which this prior is anchored.
+
+    Examples
+    --------
+    Fixing a parameter to a constant value::
+
+        prior = DiracDeltaPrior(param=5.0)
+
+    Anchoring a parameter to another parameter named "alpha"::
+
+        prior = DiracDeltaPrior(param="alpha")
+
+    Let a be a random parameter with scale ``scale_a``, and fix b's scale to a's scale::
+
         param_a = Parameter(name="a", value=0.0, par_type="random")
         ddp = DiracDeltaPrior(param="scale_a")
         param_b = Parameter(name="b", value=1.0, par_type="random", scale_prior=ddp)
-        ```
 
-    Attributes:
-        param (str | float): The fixed value or the name of the parameter to which
-                             this prior is anchored.
     """
     param: str | float
 
@@ -69,11 +78,49 @@ class Parameter:
     """
     Representation of a model parameter.
 
-    Example:
-        A random parameter "k" with initial value 0.1, scale 0.05, lower bound 0.0, upper bound 1.0,
-        affected by covariates "age" and "weight", with a normal prior on its location and
-        an exponential prior on its scale:
-        ```
+    Attributes
+    ----------
+    name : str
+        Name of the parameter.
+    value : float or list[float]
+        Initial value(s) of the parameter.
+    par_type : str
+        Type of the parameter (e.g., ``"fixed"``, ``"random"``).
+    scale : float, optional
+        Initial scale of the parameter (for random parameters).
+    covariates : list[str], optional
+        List of covariate names affecting the parameter.
+    cw_values : dict[str, float or list[float]], optional
+        Covariate-wise initial values for the parameter.
+    space : str, optional
+        Parameter space (e.g., ``"real"``, ``"vector"``).
+    lbound : float, optional
+        Lower bound of the parameter.
+    ubound : float, optional
+        Upper bound of the parameter.
+    prior : StanPrior, optional
+        Prior distribution for the parameter (for fixed, indiv).
+    loc_prior : StanPrior, optional
+        Prior for the location of the parameter (for random).
+    scale_prior : StanPrior, optional
+        Prior for the scale of the parameter (for random).
+    level : str, optional
+        Hierarchical level of the parameter (for hierarchical parameters).
+    level_type : str, optional
+        Type of the hierarchical level (e.g., ``"fixed"``, ``"random"``).
+    level_scale : float, optional
+        Initial scale of the hierarchical level (for random levels).
+    level_scale_prior : StanPrior, optional
+        Prior for the scale of the hierarchical level (for random levels).
+    noncentered : bool, optional
+        Whether to use non-centered parameterization (for random levels).
+
+    Examples
+    --------
+    A random parameter "k" with initial value 0.1, scale 0.05, lower bound 0.0, upper bound 1.0,
+    affected by covariates "age" and "weight", with a normal prior on its location and
+    an exponential prior on its scale::
+
         prior_loc = StanPrior(name="normal", params=[0.0, 1.0])
         prior_scale = StanPrior(name="exponential", params=[1.0])
         param_k = Parameter(
@@ -87,26 +134,6 @@ class Parameter:
             loc_prior=prior_loc,
             scale_prior=prior_scale
         )
-        ```
-
-    Attributes:
-        name (str): Name of the parameter.
-        value (float | list[float]): Initial value(s) of the parameter.
-        par_type (str): Type of the parameter (e.g., "fixed", "random").
-        scale (Optional[float]): Initial scale of the parameter (for random parameters).
-        covariates (Optional[list[str]]): List of covariate names affecting the parameter.
-        cw_values (Optional[dict[str, float | list[float]]]): Covariate-wise initial values for the parameter.
-        space (Optional[str]): Parameter space (e.g., "real ", "vector").
-        lbound (Optional[float]): Lower bound of the parameter.
-        ubound (Optional[float]): Upper bound of the parameter.
-        prior (Optional[StanPrior]): Prior distribution for the parameter (for fixed, indiv).
-        loc_prior (Optional[StanPrior]): Prior for the location of the parameter (for random).
-        scale_prior (Optional[StanPrior]): Prior for the scale of the parameter (for random).
-        level (Optional[str]): Hierarchical level of the parameter (for hierarchical parameters).
-        level_type (Optional[str]): Type of the hierarchical level (e.g., "fixed", "random").
-        level_scale (Optional[float]): Initial scale of the hierarchical level (for random levels).
-        level_scale_prior (Optional[StanPrior]): Prior for the scale of the hierarchical level (for random levels).
-        noncentered (Optional[bool]): Whether to use non-centered parameterization (for random levels).
 
     """
     name: str
@@ -136,14 +163,21 @@ class StanDist:
     """
     Representation of an observation distribution in Stan.
 
-    Example:
-        A normal distribution for observation "y" with parameters "mu" and "sigma":
-        `dist = StanDist(name="normal", obs_name="y", params=["mu", "sigma"])`
+    Attributes
+    ----------
+    name : str
+        Name of the Stan distribution.
+    obs_name : str
+        Name of the observation variable.
+    params : list[str]
+        List of parameter names for the distribution.
 
-    Attributes:
-        name (str): Name of the Stan distribution.
-        obs_name (str): Name of the observation variable.
-        params (list[str]): List of parameter names for the distribution.
+    Examples
+    --------
+    A normal distribution for observation "y" with parameters "mu" and "sigma"::
+
+        dist = StanDist(name="normal", obs_name="y", params=["mu", "sigma"])
+
     """
     name: str
     obs_name: str
@@ -157,17 +191,23 @@ class Variable:
     This can be a scalar or vector-valued variable, but is always real-valued,
     or has real-valued components.
 
-    Example:
-        A state variable "S" representing susceptible individuals:
-        `var = Variable(name="S")`
+    Attributes
+    ----------
+    name : str
+        Name of the variable.
+    dim : int, optional
+        Dimension of the variable (for vector-valued variables).
 
-    Example:
-        A vector-valued variable "velocity" with dimension 3:
-        `var = Variable(name="velocity", dim=3)`
+    Examples
+    --------
+    A state variable "S" representing susceptible individuals::
 
-    Attributes:
-        name (str): Name of the variable.
-        dim (Optional[int]): Dimension of the variable (for vector-valued variables).
+        var = Variable(name="S")
+
+    A vector-valued variable "velocity" with dimension 3::
+
+        var = Variable(name="velocity", dim=3)
+
     """
     name: str
     dim: Optional[int] = None
@@ -179,22 +219,29 @@ class Observation:
     Representation of an observed variable. These are typically linked to
     the model state via StanDist objects.
 
-    Example:
-        A real-valued observation "y" that is not censored:
-        `obs = Observation(name="y")`
+    Attributes
+    ----------
+    name : str
+        Name of the observation variable.
+    data_type : str
+        Data type of the observation (e.g., ``"real"``, ``"int"``).
+    censored : bool
+        Whether the observation is censored.
 
-    Example:
-        A left-censored viral load observation "VL" of type "real":
-        `obs = Observation(name="VL", data_type="real", censored=True)`
+    Examples
+    --------
+    A real-valued observation "y" that is not censored::
 
-    Example:
-        A count variable "cases" of type "int":
-        `obs = Observation(name="cases", data_type="int")`
+        obs = Observation(name="y")
 
-    Attributes:
-        name (str): Name of the observation variable.
-        data_type (str): Data type of the observation (e.g., "real", "int").
-        censored (bool): Whether the observation is censored.
+    A left-censored viral load observation "VL" of type "real"::
+
+        obs = Observation(name="VL", data_type="real", censored=True)
+
+    A count variable "cases" of type "int"::
+
+        obs = Observation(name="cases", data_type="int")
+
     """
     name: str
     data_type: str = "real"
@@ -206,23 +253,31 @@ class Covariate:
     """
     Representation of a covariate variable.
 
-    Example:
-        A continuous covariate "age":
-        `cov = Covariate(name="age", cov_type="cont")`
+    Attributes
+    ----------
+    name : str
+        Name of the covariate.
+    cov_type : str
+        Type of the covariate (``"cont"`` for continuous, ``"cat"`` for categorical).
+    categories : list[str], optional
+        Categories for categorical covariates.
+    dim : int, optional
+        Dimension of the covariate (for vector-valued covariates).
 
-    Example:
-        A categorical covariate "treatment" with categories "placebo" and "drug":
-        `cov = Covariate(name="treatment", cov_type="cat", categories=["placebo", "drug"])`
+    Examples
+    --------
+    A continuous covariate "age"::
 
-    Example:
-        A vector-valued covariate "biomarkers" with dimension 5:
-        `cov = Covariate(name="biomarkers", cov_type="cont", dim=5)`
+        cov = Covariate(name="age", cov_type="cont")
 
-    Attributes:
-        name (str): Name of the covariate.
-        cov_type (str): Type of the covariate ("cont" for continuous, "cat" for categorical).
-        categories (Optional[list[str]]): Categories for categorical covariates.
-        dim (Optional[int]): Dimension of the covariate (for vector-valued covariates).
+    A categorical covariate "treatment" with categories "placebo" and "drug"::
+
+        cov = Covariate(name="treatment", cov_type="cat", categories=["placebo", "drug"])
+
+    A vector-valued covariate "biomarkers" with dimension 5::
+
+        cov = Covariate(name="biomarkers", cov_type="cont", dim=5)
+
     """
     name: str
     cov_type: str = "cont"
@@ -238,20 +293,27 @@ class Correlation:
     The intenisty is used in the prior definition for the correlation matrix,
     e.g., in a LKJ prior.
 
-    Example:
-        A correlation structure among parameters "alpha", "beta", and "gamma" with a specified correlation matrix:
-        ```corr = Correlation(
+    Attributes
+    ----------
+    params : list[str]
+        List of parameter names involved in the correlation.
+    value : np.ndarray, optional
+        Initial correlation matrix, identity matrix if None.
+    intensity : float, optional
+        Intensity of the correlation structure (used for the prior).
+
+    Examples
+    --------
+    A correlation structure among parameters "alpha", "beta", and "gamma" with a specified correlation matrix::
+
+        corr = Correlation(
             params=["alpha", "beta", "gamma"],
             value=np.array([[1.0, 0.5, 0.3],
                             [0.5, 1.0, 0.2],
                             [0.3, 0.2, 1.0]]),
             intensity=1.0
-        )```
+        )
 
-    Attributes:
-        params (list[str]): List of parameter names involved in the correlation.
-        value (Optional[np.ndarray]): Initial correlation matrix, identity matrix if None.
-        intensity (Optional[float]): Intensity of the correlation structure (used for the prior).
     """
     params: list[str]
     value: Optional[np.ndarray] = None

@@ -3,6 +3,9 @@
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
+import sys, os
+sys.path.insert(0, os.path.abspath('..'))
+
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
@@ -16,7 +19,12 @@ author = 'Christiaan H. van Dorp'
 extensions = [
     #"myst_parser",
     "myst_nb",
+    "sphinx.ext.autodoc",
+    "sphinx.ext.napoleon",
 ]
+
+napoleon_numpy_docstring = True
+napoleon_google_docstring = False
 
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']

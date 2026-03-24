@@ -7,4 +7,5 @@ Welcome to the documentation for HBOMS. This project is hosted on [github](https
 
 readme_link
 tutorials
+api
 ```
