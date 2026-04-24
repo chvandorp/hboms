@@ -1,6 +1,8 @@
 # Hierarchical Bayesian ODE Models using Stan
 
+[![PyPI version](https://badge.fury.io/py/hboms.svg)](https://badge.fury.io/py/hboms)
 [![codecov](https://codecov.io/gh/chvandorp/hboms/branch/main/graph/badge.svg)](https://codecov.io/gh/chvandorp/hboms)
+
 
 Python package to automatically generate Stan code for fitting hierarchical ODE models with Stan.
 The integration of the ODEs is distributed over multiple CPU cores using Stan's `map_rect` function.
@@ -21,9 +23,11 @@ Similar or related packages are `brms`, `Monolix`, `Torsten`, and `Pumas`.
 
 ## Installation
 
-Currently, HBOMS can not be installed from PyPI, but it can be installed 
-with `pip`: First download the source code from the github repository. 
-For instance with
+HBOMS can be installed from PyPI using `pip` with 
+```bash
+pip install hboms
+```
+Alternatively, you can install directly from github by cloning the repository:
 ```bash
 $ git clone git@github.com:chvandorp/hboms.git
 ```
@@ -37,6 +41,23 @@ Here "myvenv" can be any name you want. Then install `hboms` with `pip`
 (myvenv) $ pip install path/to/hboms
 ```
 We can now `import hboms` in a python session in the virtual environment myvenv
+
+### Installing cmdstan
+
+HBOMS requires cmdstan to work properly. cmdstan can be installed from the `cmdstanpy`
+package (which is a dependency of the `hboms` package). 
+Instructions are found [here](https://mc-stan.org/cmdstanpy/installation.html).
+TL;DR: start a python interpreter
+```
+(myvenv) python
+```
+import `cmdstanpy` and use the `install_cmdstan` function
+```python
+import cmdstanpy
+cmdstanpy.install_cmdstan()
+```
+Installing cmdstan will take a couple of minutes.
+
 
 ## Simple example
 
